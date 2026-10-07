@@ -22,6 +22,23 @@ function allowed(url?: string): boolean {
   const u = new URL(url);
   return u.origin === 'https://app.yampi.com.br' && /^\/store\/code-editor\/?$/.test(u.pathname);
 }
+async function reloadEditor(tabId: number): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    let loading = false;
+    const timer = setTimeout(() => finish(new Error('O editor não terminou de recarregar. Nenhuma gravação foi iniciada nesta etapa.')), 25000);
+    function finish(error?: Error) {
+      clearTimeout(timer); chrome.tabs.onUpdated.removeListener(updated);
+      if (error) reject(error); else resolve();
+    }
+    function updated(id: number, change: {status?: string}) {
+      if (id !== tabId) return;
+      if (change.status === 'loading') loading = true;
+      if (loading && change.status === 'complete') finish();
+    }
+    chrome.tabs.onUpdated.addListener(updated);
+    void chrome.tabs.reload(tabId).catch(error => finish(error instanceof Error ? error : new Error(String(error))));
+  });
+}
 chrome.action.onClicked.addListener(async tab => {
   if (!tab.id || !allowed(tab.url)) {
     await chrome.action.setBadgeText({text: 'Yampi', tabId: tab.id});
@@ -37,7 +54,7 @@ chrome.action.onClicked.addListener(async tab => {
   await chrome.action.setBadgeText({text: '', tabId: tab.id});
 });
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (sender.id !== chrome.runtime.id || !sender.url?.startsWith(chrome.runtime.getURL('panel.html')) || typeof message?.session !== 'string') return false;
+  if (sender.id !== chrome.runtime.id || sender.url?.split(/[?#]/)[0] !== chrome.runtime.getURL('panel.html') || typeof message?.session !== 'string') return false;
   void (async () => {
     const session = await getSession(message.session);
     if (!session || session.panelId !== sender.tab?.id) throw new Error('Sessão expirada. Clique na extensão dentro do editor novamente.');
@@ -61,12 +78,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       });
     }
     if (!session.locked) throw new Error('Inicie uma operação antes de acessar o editor.');
-    if (message.action === 'refresh') {await chrome.tabs.reload(session.tabId); return null;}
+    if (message.action === 'refresh') {await reloadEditor(session.tabId); return null;}
     const cmd = message.command as Command;
-    if (!cmd || !['context', 'inventory', 'read', 'write'].includes(cmd.op)) throw new Error('Comando não permitido.');
+    if (!cmd || !['context', 'inventory', 'read', 'readAsset', 'write'].includes(cmd.op)) throw new Error('Comando não permitido.');
     // Each command completes within a bounded time; export loops live in the panel, not in the suspendable worker.
     const [existing] = await chrome.scripting.executeScript({target: {tabId: session.tabId}, world: 'MAIN', func: () => {
-      return (window as unknown as {YampiThemeSyncBridge?: {version?: string}}).YampiThemeSyncBridge?.version === '0.1.0';
+      return (window as unknown as {YampiThemeSyncBridge?: {version?: string}}).YampiThemeSyncBridge?.version === '0.2.0';
     }});
     if (!existing?.result) await chrome.scripting.executeScript({target: {tabId: session.tabId}, world: 'MAIN', files: ['bridge.js']});
     const results = await chrome.scripting.executeScript({target: {tabId: session.tabId}, world: 'MAIN', func: async command => {

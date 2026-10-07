@@ -9,7 +9,7 @@
 
 ## Arquivos novos e imagens do tema
 
-Investigar os controles reais de criação de arquivos. A Yampi restringe os tipos e não permite criar pastas livremente. Novos caminhos devem ter uma etapa explícita de criação, conferir a ausência antes de criar e impedir duplicatas. Implementar download/upload binário para imagens dos assets somente após validar seu fluxo específico. Renomear e excluir exigem um desenho separado de recuperação; continuam desativados.
+Exportação de imagens PNG/JPG/JPEG/WebP/SVG implementada, com ciclo completo de PNG testado no editor fictício; conferir os demais formatos, preview/CORS e a equivalência dos bytes na Yampi real. Investigar controles reais de criação e substituição de imagens. Novos caminhos devem ter etapa explícita de criação, conferir a ausência e impedir duplicatas. A Yampi não permite criar pastas livremente. Upload binário exige backup/restauração de bytes e conferência após reload; permanece bloqueado. Renomear e excluir exigem um desenho separado de recuperação; continuam desativados.
 
 ## Configurações e catálogo
 
@@ -17,4 +17,4 @@ São dados distintos dos arquivos do tema. Planejar exportação de configuraç�
 
 ## Manutenção
 
-Histórico de múltiplas lojas, recuperação de uma exportação interrompida, comparação visual por linhas e validações locais de código podem ser adicionados depois da validação do fluxo básico. O repositório permanece privado. Uma distribuição para terceiros, se pedida no futuro, pode compartilhar apenas o pacote da ferramenta, sem revelar o código/dados dos projetos das lojas.
+Histórico de envios isolado por loja, originais independentes, projeto local portátil, check de compilação e importação da pasta inteira/ZIP estão implementados na 0.2. Ampliar a compatibilidade Twig/Sass/Vue 2 e simular plugins próprios exige exemplos fictícios das estruturas suportadas. Recuperação de uma exportação interrompida, comparação por linhas e identificação oficial de tema ainda podem ser adicionadas. O proprietário autorizou o código público; projetos e dados das lojas continuam excluídos do GitHub.

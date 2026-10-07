@@ -11,6 +11,10 @@ export class BrowserAdapter implements Adapter {
   }
   async inventory(): Promise<string[]> {return await this.rpc({command: {op: 'inventory', context: this.expected}}) as string[];}
   async read(path: string): Promise<string> {return await this.rpc({command: {op: 'read', context: this.expected, path}}) as string;}
+  async readAsset(path: string): Promise<Uint8Array> {
+    const encoded = await this.rpc({command: {op: 'readAsset', context: this.expected, path}}) as string;
+    return Uint8Array.from(atob(encoded), c => c.charCodeAt(0));
+  }
   async write(path: string, expected: string, content: string): Promise<void> {
     // An open editor tab can hold an old server version. Fetch again before each write.
     await this.refresh();

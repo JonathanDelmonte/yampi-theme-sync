@@ -7,6 +7,7 @@ let stored: Record<string, Session>;
 let tabs: Map<number, {id: number; url: string}>;
 let chromeMock: typeof chrome;
 let injected: Set<number>;
+let updated: Set<(id: number, change: {status?: string}) => void>;
 const extId = 'ficticious-test-extension';
 const url = 'https://app.yampi.com.br/store/code-editor/';
 function sender(panelId: number): chrome.runtime.MessageSender {return {id: extId, url: `chrome-extension://${extId}/panel.html`, tab: {id: panelId} as chrome.tabs.Tab};}
@@ -22,7 +23,7 @@ async function open(tabId = 1) {
   return {token, panelId: data.panelId};
 }
 beforeEach(async () => {
-  vi.resetModules(); stored = {}; tabs = new Map([[1, {id: 1, url}], [2, {id: 2, url}]]); injected = new Set();
+  vi.resetModules(); stored = {}; tabs = new Map([[1, {id: 1, url}], [2, {id: 2, url}]]); injected = new Set(); updated = new Set();
   chromeMock = {
     runtime: {id: extId, getURL: (path: string) => `chrome-extension://${extId}/${path}`, onMessage: {addListener: vi.fn(fn => {listener = fn;})}},
     action: {onClicked: {addListener: vi.fn(fn => {clicked = fn;})}, setBadgeText: vi.fn(async () => {}), setTitle: vi.fn(async () => {})},
@@ -34,7 +35,9 @@ beforeEach(async () => {
     tabs: {
       create: vi.fn(async ({url}: {url: string}) => {const id = tabs.size + 100; const tab = {id, url}; tabs.set(id, tab); return tab;}),
       get: vi.fn(async (id: number) => {const tab = tabs.get(id); if (!tab) throw new Error('closed'); return tab;}),
-      reload: vi.fn(async () => {}), onRemoved: {addListener: vi.fn(fn => {removed = fn;})}
+      reload: vi.fn(async (id: number) => {for (const listener of updated) {listener(id, {status: 'loading'}); listener(id, {status: 'complete'});}}),
+      onUpdated: {addListener: vi.fn(fn => updated.add(fn)), removeListener: vi.fn(fn => updated.delete(fn))},
+      onRemoved: {addListener: vi.fn(fn => {removed = fn;})}
     },
     scripting: {executeScript: vi.fn(async (request: {target: {tabId: number}; files?: string[]; args?: unknown[]}) => {
       if (request.files) {injected.add(request.target.tabId); return [{result: null}];}
@@ -58,6 +61,17 @@ describe('permissões e sessões do worker', () => {
   test('sem lock não lê e não grava', async () => {
     const s = await open(); expect((await message(s.token, s.panelId, {command: {op: 'read', path: 'templates/home.twig'}})).ok).toBe(false);
     expect(chromeMock.scripting.executeScript).not.toHaveBeenCalled();
+  });
+  test('refresh aguarda loading e complete da aba antes de responder', async () => {
+    const s = await open(); await message(s.token, s.panelId, {action: 'lock'});
+    let response = false;
+    vi.mocked(chromeMock.tabs.reload).mockImplementation(async () => {});
+    const wait = message(s.token, s.panelId, {action: 'refresh'}).then(value => {response = true; return value;});
+    await vi.waitFor(() => expect(updated.size).toBe(1));
+    for (const listener of updated) listener(1, {status: 'complete'});
+    await Promise.resolve(); expect(response).toBe(false);
+    for (const listener of updated) {listener(1, {status: 'loading'}); listener(1, {status: 'complete'});}
+    expect((await wait).ok).toBe(true); expect(updated.size).toBe(0);
   });
   test('segunda janela fica bloqueada durante a primeira operação', async () => {
     const a = await open(), b = await open();

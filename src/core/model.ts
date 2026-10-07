@@ -1,4 +1,5 @@
 export type Files = Record<string, string>;
+export type Assets = Record<string, Uint8Array>;
 export interface Context {
   storeName: string;
   previewOrigin: string;
@@ -8,22 +9,24 @@ export interface Snapshot {
   context: Context;
   capturedAt: string;
   files: Files;
+  assets?: Assets;
 }
-export interface FileHash {path: string; sha256: string; bytes: number}
+export interface FileHash {path: string; sha256: string; bytes: number; kind?: 'text' | 'image'}
 export interface Manifest {
   format: 'yampi-theme-sync';
-  version: 1;
+  version: 1 | 2;
   context: Context;
   capturedAt: string;
   files: FileHash[];
 }
 export type Status = 'update' | 'unchanged' | 'remote-only' | 'already-applied' | 'conflict' | 'missing-local' | 'missing-remote' | 'new-local' | 'unsupported';
-export interface PlanRow {path: string; status: Status; base?: string; local?: string; remote?: string}
+export interface PlanRow {path: string; status: Status; base?: string; local?: string; remote?: string; image?: {base?: Uint8Array; local?: Uint8Array; remote?: Uint8Array}}
 export interface Plan {context: Context; rows: PlanRow[]; createdAt: string}
 export interface Adapter {
   context(): Promise<Context>;
   inventory(): Promise<string[]>;
   read(path: string): Promise<string>;
+  readAsset?(path: string): Promise<Uint8Array>;
   write(path: string, expected: string, content: string): Promise<void>;
   refresh(): Promise<void>;
 }
@@ -59,6 +62,30 @@ export function validatePaths(paths: string[]): void {
   }
 }
 export function writable(path: string): boolean {return /\.(twig|vue|css|scss)$/i.test(path)}
+export function imagePath(path: string): boolean {return /^assets\/.*\.(png|jpe?g|webp|svg)$/i.test(path)}
+export function validateImage(path: string, bytes: Uint8Array): void {
+  if (!imagePath(path) || !bytes.length || bytes.length > MAX_FILE_BYTES) throw new Error(`Imagem inválida ou grande demais: ${path}`);
+  const hex = Array.from(bytes.slice(0, 12), b => b.toString(16).padStart(2, '0')).join('');
+  const extension = path.split('.').at(-1)!.toLowerCase();
+  const valid = extension === 'png' ? hex.startsWith('89504e470d0a1a0a')
+    : ['jpg', 'jpeg'].includes(extension) ? hex.startsWith('ffd8ff')
+    : extension === 'webp' ? hex.startsWith('52494646') && hex.slice(16, 24) === '57454250'
+    : /^\s*(?:<\?xml[^>]*>\s*)?(?:<!--[\s\S]*?-->\s*)*<svg[\s>]/i.test(new TextDecoder('utf-8', {fatal: true}).decode(bytes));
+  if (!valid) throw new Error(`Conteúdo não corresponde ao tipo da imagem: ${path}`);
+}
+export function safeSnapshot(snapshot: Snapshot): Snapshot {
+  const files = safeFiles(Object.entries(snapshot.files));
+  const assets: Assets = Object.create(null);
+  validatePaths([...Object.keys(files), ...Object.keys(snapshot.assets || {})]);
+  let total = Object.values(files).reduce((n, v) => n + new TextEncoder().encode(v).length, 0);
+  for (const [path, bytes] of Object.entries(snapshot.assets || {})) {
+    validateImage(path, bytes);
+    total += bytes.length;
+    if (total > MAX_TOTAL_BYTES) throw new Error('O tema ultrapassa o limite de 32 MiB.');
+    assets[path] = new Uint8Array(bytes);
+  }
+  return {...snapshot, context: validateContext(snapshot.context), files, ...(Object.keys(assets).length ? {assets} : {})};
+}
 export function sameContext(a: Context, b: Context): boolean {
   return a.storeName === b.storeName && a.previewOrigin === b.previewOrigin && a.editorOrigin === b.editorOrigin;
 }
@@ -88,6 +115,9 @@ export function safeFiles(entries: [string, string][]): Files {
   return result;
 }
 export async function sha256(text: string): Promise<string> {
-  const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return hashBytes(new TextEncoder().encode(text));
+}
+export async function hashBytes(bytes: Uint8Array): Promise<string> {
+  const hash = await crypto.subtle.digest('SHA-256', new Uint8Array(bytes));
   return Array.from(new Uint8Array(hash), b => b.toString(16).padStart(2, '0')).join('');
 }

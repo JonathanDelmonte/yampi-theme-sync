@@ -1,18 +1,10 @@
 import {EditorState} from '@codemirror/state';
 import {EditorView} from '@codemirror/view';
 import type {Files} from '../core/model';
-const initial: Files = {
-  'assets/images/readme.md': 'Imagens de catálogo não fazem parte do tema.\n',
-  'assets/styles/global/main.scss': '$brand: #20634f;\nbody { color: $brand; }\n',
-  'components/Example.vue': '<template><button>{{ label }}</button></template>\n<script>export default { props: ["label"] }</script>\n',
-  'elements/head.twig': '<meta name="description" content="Exemplo fictício">\n',
-  'elements/header/head.twig': '<header>Outro arquivo com o mesmo nome</header>\n',
-  'sections/home/main_banner.twig': '<section>{{ section.params.title }}</section>\n',
-  'templates/home.twig': '<main>{% include "sections/home/main_banner.twig" %}</main>\n',
-  'templates/long.twig': Array.from({length: 2000}, (_, i) => `<p>Linha ${i + 1} · conteúdo de teste 🎮</p>`).join('\n') + '\n'
-};
+import {demoSnapshot} from './sample';
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
-let files: Files = JSON.parse(sessionStorage.getItem('fixture-files') || JSON.stringify(initial));
+let files: Files = JSON.parse(sessionStorage.getItem('fixture-files') || JSON.stringify(demoSnapshot.files));
+const assetSources = Object.fromEntries(Object.entries(demoSnapshot.assets || {}).map(([p, b]) => [p, 'data:image/png;base64,' + btoa(String.fromCharCode(...b))]));
 let current: string | undefined, editor: EditorView | undefined, generation = 0, publications = Number(sessionStorage.getItem('fixture-publications') || 0);
 $('test-info').textContent = `Publicações: ${publications}`;
 function store() {sessionStorage.setItem('fixture-files', JSON.stringify(files));}
@@ -36,6 +28,7 @@ function open(path: string, li: HTMLElement) {
   setTimeout(() => {
     if (generation !== id) return;
     $('editor').replaceChildren();
+    if (assetSources[path]) {const img = document.createElement('img'); img.src = assetSources[path]; img.alt = path; $('editor').append(img); return;}
     editor = new EditorView({parent: $('editor'), state: EditorState.create({doc: files[path], extensions: [EditorView.updateListener.of(update => {
       if (!update.docChanged) return;
       save.disabled = update.state.doc.toString() === files[path];
@@ -52,7 +45,7 @@ function folder(parent: HTMLElement, name: string): HTMLElement {
   return list;
 }
 const folders = new Map<string, HTMLElement>();
-for (const path of Object.keys(files).sort()) {
+for (const path of [...Object.keys(files), ...Object.keys(assetSources)].sort()) {
   const parts = path.split('/'); let parent = $('tree'), key = '';
   for (const name of parts.slice(0, -1)) {
     key += (key ? '/' : '') + name;
@@ -65,7 +58,7 @@ for (const path of Object.keys(files).sort()) {
   const option = document.createElement('option'); option.value = path; option.textContent = path; $('remote-file').append(option);
 }
 $('external-change').addEventListener('click', () => {
-  const path = $<HTMLSelectElement>('remote-file').value; files[path] += '\n<!-- Alteração feita na loja depois da exportação -->\n'; store();
+  const path = $<HTMLSelectElement>('remote-file').value; if (assetSources[path]) return; files[path] += '\n<!-- Alteração feita na loja depois da exportação -->\n'; store();
   if (current === path) open(path, document.querySelector('li.selected')!);
 });
 $('switch-shop').addEventListener('click', () => {$('shop-name').textContent = 'Outra loja de testes';});

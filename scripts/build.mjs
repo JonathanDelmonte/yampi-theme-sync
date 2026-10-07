@@ -7,7 +7,11 @@ await mkdir(dist, {recursive: true});
 // Only these generated files are removed; never touch client files or exports.
 for (const name of ['background.js', 'bridge.js', 'panel.js', 'fixture.js']) await rm(path.join(dist, name), {force: true});
 await cp(path.join(root, 'extension'), dist, {recursive: true});
-const common = {bundle: true, target: 'chrome120', sourcemap: false, minify: true, legalComments: 'eof', logLevel: 'warning'};
+const raw = {name: 'raw', setup(builder) {
+  builder.onResolve({filter: /\?raw$/}, args => ({path: path.resolve(args.resolveDir, args.path.slice(0, -4)), namespace: 'raw'}));
+  builder.onLoad({filter: /.*/, namespace: 'raw'}, async args => ({contents: await readFile(args.path, 'utf8'), loader: 'text'}));
+}};
+const common = {bundle: true, target: 'chrome120', sourcemap: false, minify: true, legalComments: 'eof', logLevel: 'warning', plugins: [raw]};
 await build({...common, entryPoints: [path.join(root, 'src/browser/background.ts')], outfile: path.join(dist, 'background.js'), format: 'esm'});
 await build({...common, entryPoints: [path.join(root, 'src/browser/bridge.ts')], outfile: path.join(dist, 'bridge.js'), format: 'iife', globalName: 'YampiThemeSyncBridge'});
 await build({...common, entryPoints: [path.join(root, 'src/panel.ts')], outfile: path.join(dist, 'panel.js'), format: 'esm'});

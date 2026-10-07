@@ -11,7 +11,8 @@ entries['TERCEIROS.md'] = new Uint8Array(await readFile(path.join(root, 'docs/TE
 const bytes = zipSync(entries, {level: 6});
 const out = path.join(root, 'releases');
 await mkdir(out, {recursive: true});
-const name = 'yampi-theme-sync-0.1.0.zip';
+const {version} = JSON.parse(await readFile(path.join(root, 'extension/manifest.json'), 'utf8'));
+const name = `yampi-theme-sync-${version}.zip`;
 await writeFile(path.join(out, name), bytes);
 await writeFile(path.join(out, name + '.sha256'), createHash('sha256').update(bytes).digest('hex') + '  ' + name + '\n');
 console.log('Pacote pronto: releases/' + name);

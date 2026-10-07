@@ -1,0 +1,22 @@
+{
+  "name": "yampi-local-project",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "node .yampi-sync/tools/dev.mjs",
+    "check": "node .yampi-sync/tools/dev.mjs --check",
+    "pack": "node .yampi-sync/tools/pack.mjs"
+  },
+  "dependencies": {
+    "esbuild": "0.28.2",
+    "fflate": "0.8.3",
+    "sass": "1.105.1",
+    "twig": "3.0.0",
+    "vue": "2.7.16",
+    "vue-template-compiler": "2.7.16"
+  }
+}

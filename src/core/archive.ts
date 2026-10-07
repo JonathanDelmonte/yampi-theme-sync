@@ -1,64 +1,110 @@
 import {zipSync, unzipSync, strToU8} from 'fflate';
-import {MAX_FILES, MAX_TOTAL_BYTES, MAX_FILE_BYTES, ROOTS, safeFiles, sha256, validateContext, type Snapshot, type Manifest, type Files} from './model';
+import {MAX_FILES, MAX_TOTAL_BYTES, MAX_FILE_BYTES, ROOTS, safeFiles, safeSnapshot, hashBytes, imagePath, validateContext, validatePath, type Snapshot, type Manifest, type Files, type Assets} from './model';
+import {localKit} from './local-kit';
 const metaPath = '.yampi-sync/manifest.json';
-export async function encodeSnapshot(snapshot: Snapshot): Promise<Uint8Array> {
-  const files = safeFiles(Object.entries(snapshot.files));
-  const manifest: Manifest = {format: 'yampi-theme-sync', version: 1, context: validateContext(snapshot.context), capturedAt: snapshot.capturedAt, files: []};
+export interface Project {baseline: Snapshot; local: Files; localAssets: Assets}
+export async function encodeSnapshot(snapshot: Snapshot, project = false): Promise<Uint8Array> {
+  const source = safeSnapshot(snapshot);
+  const manifest: Manifest = {format: 'yampi-theme-sync', version: 2, context: source.context, capturedAt: source.capturedAt, files: []};
   const entries: Record<string, Uint8Array> = Object.create(null);
-  for (const path of Object.keys(files).sort()) {
-    const bytes = strToU8(files[path]);
+  const all = {...Object.fromEntries(Object.entries(source.files).map(([p, v]) => [p, strToU8(v)])), ...source.assets};
+  for (const path of Object.keys(all).sort()) {
+    const bytes = all[path];
     entries[`tema/${path}`] = bytes;
     entries[`.yampi-sync/baseline/${path}`] = bytes;
-    manifest.files.push({path, sha256: await sha256(files[path]), bytes: bytes.length});
+    manifest.files.push({path, sha256: await hashBytes(bytes), bytes: bytes.length, kind: source.assets?.[path] ? 'image' : 'text'});
   }
   entries[metaPath] = strToU8(JSON.stringify(manifest, null, 2));
+  if (project) for (const [path, value] of Object.entries(localKit(Object.keys(source.files)))) entries[path] = strToU8(value);
   return zipSync(entries, {level: 6});
 }
+function safeArchivePath(path: string): void {
+  if (!path || path.length > 500 || /[\\\u0000-\u001f\u007f:<>"|?*]/.test(path) || path.startsWith('/') || path.split('/').some(p => p === '..' || p === '.')) throw new Error(`Caminho inseguro no ZIP: ${path}`);
+}
+function irrelevant(path: string): boolean {
+  const parts = path.split('/');
+  if (parts.includes('tema') || path.includes('.yampi-sync/baseline/')) return false;
+  return parts.some(p => ['node_modules', '.git', '.cache', 'backups', 'exports'].includes(p));
+}
 function unzipSafe(data: Uint8Array): Record<string, Uint8Array> {
-  if (data.length > MAX_TOTAL_BYTES * 2) throw new Error('ZIP muito grande.');
+  if (data.length > MAX_TOTAL_BYTES * 2 + MAX_FILE_BYTES) throw new Error('ZIP muito grande.');
   const names = new Set<string>();
   let total = 0;
   return unzipSync(data, {filter(file) {
-    if (names.has(file.name)) throw new Error(`Entrada duplicada no ZIP: ${file.name}`);
-    names.add(file.name);
-    if (names.size > MAX_FILES * 2 + 20 || file.originalSize > MAX_FILE_BYTES * 2 || (total += file.originalSize) > MAX_TOTAL_BYTES * 2 + MAX_FILE_BYTES) throw new Error('ZIP ultrapassa os limites de extração.');
-    if (/[\\\u0000-\u001f]/.test(file.name) || file.name.startsWith('/') || file.name.split('/').some(p => p === '..' || p === '.')) throw new Error(`Caminho inseguro no ZIP: ${file.name}`);
-    return !file.name.endsWith('/');
+    safeArchivePath(file.name);
+    if (irrelevant(file.name) || file.name.endsWith('/')) return false;
+    const name = file.name.toLowerCase();
+    if (names.has(name)) throw new Error(`Entrada duplicada ou ambígua no ZIP: ${file.name}`);
+    names.add(name);
+    if (names.size > MAX_FILES * 2 + 100 || file.originalSize > MAX_FILE_BYTES || (total += file.originalSize) > MAX_TOTAL_BYTES * 2 + MAX_FILE_BYTES) throw new Error('ZIP ultrapassa os limites de extração.');
+    return true;
   }});
 }
 const decoder = new TextDecoder('utf-8', {fatal: true, ignoreBOM: true});
-function text(data: Uint8Array): string {return decoder.decode(data)}
-export async function decodeProject(data: Uint8Array): Promise<{baseline: Snapshot; local: Files}> {
-  const archive = unzipSafe(data);
-  const meta = archive[metaPath];
-  if (!meta) throw new Error('Use um ZIP exportado por esta extensão, com .yampi-sync/manifest.json.');
-  const m = JSON.parse(text(meta)) as Manifest;
-  if (m.format !== 'yampi-theme-sync' || m.version !== 1 || !Array.isArray(m.files) || typeof m.capturedAt !== 'string') throw new Error('Formato de exportação não reconhecido.');
-  const context = validateContext(m.context);
-  const bases: [string, string][] = [];
-  for (const f of m.files) {
-    const value = archive[`.yampi-sync/baseline/${f.path}`];
-    if (!value || value.length !== f.bytes || await sha256(text(value)) !== f.sha256) throw new Error(`Baseline ausente ou alterada: ${f.path}`);
-    bases.push([f.path, text(value)]);
+function text(data: Uint8Array): string {return decoder.decode(data);}
+async function decodeEntries(input: Record<string, Uint8Array>): Promise<Project> {
+  const manifests = Object.keys(input).filter(p => p === metaPath || p.endsWith('/' + metaPath));
+  if (manifests.length !== 1) throw new Error('Use um único projeto exportado por esta extensão, com .yampi-sync/manifest.json.');
+  const prefix = manifests[0].slice(0, -metaPath.length);
+  const archive: Record<string, Uint8Array> = Object.create(null);
+  for (const [p, value] of Object.entries(input)) {
+    if (!p.startsWith(prefix)) throw new Error('O ZIP contém mais de uma raiz de projeto.');
+    archive[p.slice(prefix.length)] = value;
   }
-  const baseline: Snapshot = {context, capturedAt: m.capturedAt, files: safeFiles(bases)};
-  const local = safeFiles(Object.entries(archive).filter(([p]) => p.startsWith('tema/')).map(([p, v]) => [p.slice(5), text(v).replace(/\r\n?/g, '\n')]));
-  if (!Object.keys(baseline.files).length) throw new Error('A exportação não contém arquivos.');
-  return {baseline, local};
+  const m = JSON.parse(text(archive[metaPath])) as Manifest;
+  if (!m || m.format !== 'yampi-theme-sync' || ![1, 2].includes(m.version) || !Array.isArray(m.files) || !m.files.length || m.files.length > MAX_FILES || typeof m.capturedAt !== 'string' || !Number.isFinite(Date.parse(m.capturedAt))) throw new Error('Formato de exportação não reconhecido.');
+  const context = validateContext(m.context);
+  const bases: [string, string][] = [], assets: Assets = Object.create(null);
+  const seen = new Set<string>();
+  for (const f of m.files) {
+    if (!f || typeof f.path !== 'string' || !Number.isInteger(f.bytes) || f.bytes < 0 || f.bytes > MAX_FILE_BYTES || typeof f.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(f.sha256) || (f.kind !== undefined && !['text', 'image'].includes(f.kind))) throw new Error('Registro de integridade inválido.');
+    validatePath(f.path);
+    if (seen.has(f.path.toLowerCase())) throw new Error(`Baseline duplicada: ${f.path}`);
+    seen.add(f.path.toLowerCase());
+    const value = archive[`.yampi-sync/baseline/${f.path}`];
+    if (!value || value.length !== f.bytes || await hashBytes(value) !== f.sha256) throw new Error(`Baseline ausente ou alterada: ${f.path}`);
+    if (f.kind === 'image') assets[f.path] = value;
+    else bases.push([f.path, text(value)]);
+  }
+  for (const path of Object.keys(archive).filter(p => p.startsWith('.yampi-sync/baseline/'))) {
+    if (!m.files.some(f => path === `.yampi-sync/baseline/${f.path}`)) throw new Error(`Baseline sem registro no manifesto: ${path}`);
+  }
+  const baseline = safeSnapshot({context, capturedAt: m.capturedAt, files: safeFiles(bases), ...(Object.keys(assets).length ? {assets} : {})});
+  const edited = readThemeEntries(Object.entries(archive).filter(([p]) => p.startsWith('tema/')).map(([p, v]) => [p.slice(5), v]));
+  safeSnapshot({...baseline, files: edited.files, assets: edited.assets});
+  return {baseline, local: edited.files, localAssets: edited.assets};
+}
+function readThemeEntries(entries: [string, Uint8Array][]): {files: Files; assets: Assets} {
+  const files: [string, string][] = [], assets: Assets = Object.create(null);
+  for (const [path, value] of entries) {
+    validatePath(path);
+    if (imagePath(path)) assets[path] = value;
+    else files.push([path, text(value).replace(/\r\n?/g, '\n')]);
+  }
+  return {files: safeFiles(files), assets};
+}
+export async function decodeProject(data: Uint8Array): Promise<Project> {return decodeEntries(unzipSafe(data));}
+export async function readProjectDirectory(files: FileList | File[]): Promise<Project | {local: Files; localAssets: Assets}> {
+  const source = Array.from(files).map(file => ({file, path: (file.webkitRelativePath || file.name).split('/').slice(1).join('/')}));
+  const project = source.some(f => f.path === metaPath);
+  const entries: Record<string, Uint8Array> = Object.create(null);
+  let total = 0, count = 0;
+  for (const {file, path} of source) {
+    if (project && !path.startsWith('tema/') && !path.startsWith('.yampi-sync/baseline/') && path !== metaPath) continue;
+    if (!project && !ROOTS.has(path.split('/')[0])) throw new Error(`Selecione a raiz do projeto exportado ou a pasta tema. Arquivo fora do tema: ${path}`);
+    safeArchivePath(path);
+    if (entries[path]) throw new Error(`Entrada duplicada: ${path}`);
+    if (file.size > MAX_FILE_BYTES || (total += file.size) > (project ? MAX_TOTAL_BYTES * 2 + MAX_FILE_BYTES : MAX_TOTAL_BYTES) || ++count > MAX_FILES * 2 + 1) throw new Error('A pasta ultrapassa os limites de importação.');
+    entries[path] = new Uint8Array(await file.arrayBuffer());
+  }
+  if (!count) throw new Error('Pasta vazia.');
+  if (project) return decodeEntries(entries);
+  const edited = readThemeEntries(Object.entries(entries));
+  safeSnapshot({context: {storeName: 'Validação local', previewOrigin: 'https://local.invalid', editorOrigin: 'https://local.invalid'}, capturedAt: new Date().toISOString(), files: edited.files, assets: edited.assets});
+  return {local: edited.files, localAssets: edited.assets};
 }
 export async function readDirectory(files: FileList | File[]): Promise<Files> {
-  const entries: [string, string][] = [];
-  let bytes = 0;
-  for (const file of Array.from(files)) {
-    const full = file.webkitRelativePath || file.name;
-    // Directory picker includes the selected directory name. Select the theme directory itself.
-    const parts = full.split('/');
-    const relative = parts.slice(1).join('/');
-    if (!ROOTS.has(relative.split('/')[0])) throw new Error(`Selecione a pasta tema (assets, components, elements, sections e templates). Arquivo fora do tema: ${full}`);
-    bytes += file.size;
-    if (file.size > MAX_FILE_BYTES || bytes > MAX_TOTAL_BYTES || entries.length >= MAX_FILES) throw new Error('A pasta ultrapassa os limites de importação.');
-    entries.push([relative, text(new Uint8Array(await file.arrayBuffer())).replace(/\r\n?/g, '\n')]);
-  }
-  if (!entries.length) throw new Error('Pasta vazia.');
-  return safeFiles(entries);
+  const project = await readProjectDirectory(files);
+  if (Object.keys(project.localAssets).length) throw new Error('Use o importador de projeto para carregar imagens.');
+  return project.local;
 }

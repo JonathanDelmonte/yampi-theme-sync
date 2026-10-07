@@ -1,4 +1,4 @@
-import {assertContext, safeFiles, validatePaths, type Adapter, type Snapshot, type Progress, type Plan, type Journal} from './model';
+import {assertContext, safeFiles, safeSnapshot, imagePath, writable, validatePaths, MAX_TOTAL_BYTES, MAX_FILE_BYTES, type Assets, type Adapter, type Snapshot, type Progress, type Plan, type Journal} from './model';
 type Hooks = {signal?: AbortSignal; progress?: (p: Progress) => void};
 function check(signal?: AbortSignal) {if (signal?.aborted) throw new Error('Cancelado. Os arquivos já salvos não foram desfeitos.');}
 export async function capture(adapter: Adapter, hooks: Hooks = {}): Promise<Snapshot> {
@@ -7,25 +7,39 @@ export async function capture(adapter: Adapter, hooks: Hooks = {}): Promise<Snap
   validatePaths(paths);
   if (!paths.length) throw new Error('Nenhum arquivo encontrado no editor.');
   const entries: [string, string][] = [];
+  const assets: Assets = Object.create(null);
+  let total = 0;
+  let done = 0;
   for (const path of paths) {
     check(hooks.signal);
     assertContext(context, await adapter.context());
-    entries.push([path, await adapter.read(path)]);
-    hooks.progress?.({done: entries.length, total: paths.length, path, phase: 'Lendo arquivos'});
+    if (imagePath(path)) {
+      if (!adapter.readAsset) throw new Error(`O adaptador não consegue exportar a imagem: ${path}`);
+      const bytes = await adapter.readAsset(path);
+      total += bytes.length; assets[path] = bytes;
+    } else {
+      const content = await adapter.read(path);
+      const size = new TextEncoder().encode(content).length;
+      if (size > MAX_FILE_BYTES) throw new Error(`Arquivo grande demais: ${path}`);
+      total += size; entries.push([path, content]);
+    }
+    if (total > MAX_TOTAL_BYTES) throw new Error('O tema ultrapassa o limite de 32 MiB.');
+    hooks.progress?.({done: ++done, total: paths.length, path, phase: 'Lendo arquivos'});
   }
   assertContext(context, await adapter.context());
   const end = (await adapter.inventory()).sort();
   if (JSON.stringify(paths) !== JSON.stringify(end)) throw new Error('A árvore de arquivos mudou durante a leitura. Exporte novamente.');
-  return {context, capturedAt: new Date().toISOString(), files: safeFiles(entries)};
+  return safeSnapshot({context, capturedAt: new Date().toISOString(), files: safeFiles(entries), ...(Object.keys(assets).length ? {assets} : {})});
 }
 export async function applyPlan(adapter: Adapter, plan: Plan, selected: string[], hooks: Hooks & {
   persist: (journal: Journal) => Promise<void>;
   backup: (snapshot: Snapshot) => Promise<void>;
 }): Promise<Journal> {
   if (!selected.length || new Set(selected).size !== selected.length) throw new Error('Selecione arquivos sem duplicatas.');
+  validatePaths(selected);
   const rows = selected.map(path => {
     const matches = plan.rows.filter(r => r.path === path);
-    if (matches.length !== 1 || matches[0].status !== 'update' || matches[0].local === undefined || matches[0].remote === undefined) throw new Error(`Arquivo não elegível para envio: ${path}`);
+    if (matches.length !== 1 || matches[0].status !== 'update' || !writable(path) || matches[0].image || matches[0].local === undefined || matches[0].remote === undefined) throw new Error(`Arquivo não elegível para envio: ${path}`);
     return matches[0];
   });
   check(hooks.signal);
