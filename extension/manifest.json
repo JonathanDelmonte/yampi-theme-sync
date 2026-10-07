@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "Yampi Theme Sync",
+  "version": "0.1.0",
+  "description": "Exporta e compara arquivos do tema Yampi. Envia alterações selecionadas com backup, sem publicar a loja.",
+  "permissions": ["activeTab", "scripting", "storage", "downloads"],
+  "action": {"default_title": "Abrir Yampi Theme Sync neste editor"},
+  "background": {"service_worker": "background.js", "type": "module"},
+  "content_security_policy": {"extension_pages": "script-src 'self'; object-src 'none'; connect-src 'none'"}
+}

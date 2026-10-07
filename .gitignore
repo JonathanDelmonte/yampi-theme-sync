@@ -1,0 +1,16 @@
+node_modules/
+dist/
+releases/
+.cache/
+coverage/
+.vitest/
+*.log
+*.zip
+*.env
+.env*
+exports/
+backups/
+client-data/
+tema/
+theme/
+.yampi-sync/

@@ -1,0 +1,81 @@
+import {assertContext, safeFiles, validatePaths, type Adapter, type Snapshot, type Progress, type Plan, type Journal} from './model';
+type Hooks = {signal?: AbortSignal; progress?: (p: Progress) => void};
+function check(signal?: AbortSignal) {if (signal?.aborted) throw new Error('Cancelado. Os arquivos já salvos não foram desfeitos.');}
+export async function capture(adapter: Adapter, hooks: Hooks = {}): Promise<Snapshot> {
+  const context = await adapter.context();
+  const paths = (await adapter.inventory()).sort();
+  validatePaths(paths);
+  if (!paths.length) throw new Error('Nenhum arquivo encontrado no editor.');
+  const entries: [string, string][] = [];
+  for (const path of paths) {
+    check(hooks.signal);
+    assertContext(context, await adapter.context());
+    entries.push([path, await adapter.read(path)]);
+    hooks.progress?.({done: entries.length, total: paths.length, path, phase: 'Lendo arquivos'});
+  }
+  assertContext(context, await adapter.context());
+  const end = (await adapter.inventory()).sort();
+  if (JSON.stringify(paths) !== JSON.stringify(end)) throw new Error('A árvore de arquivos mudou durante a leitura. Exporte novamente.');
+  return {context, capturedAt: new Date().toISOString(), files: safeFiles(entries)};
+}
+export async function applyPlan(adapter: Adapter, plan: Plan, selected: string[], hooks: Hooks & {
+  persist: (journal: Journal) => Promise<void>;
+  backup: (snapshot: Snapshot) => Promise<void>;
+}): Promise<Journal> {
+  if (!selected.length || new Set(selected).size !== selected.length) throw new Error('Selecione arquivos sem duplicatas.');
+  const rows = selected.map(path => {
+    const matches = plan.rows.filter(r => r.path === path);
+    if (matches.length !== 1 || matches[0].status !== 'update' || matches[0].local === undefined || matches[0].remote === undefined) throw new Error(`Arquivo não elegível para envio: ${path}`);
+    return matches[0];
+  });
+  check(hooks.signal);
+  assertContext(plan.context, await adapter.context());
+  await adapter.refresh();
+  // Preflight every selected file before the first mutation.
+  const before: [string, string][] = [];
+  for (const row of rows) {
+    check(hooks.signal);
+    assertContext(plan.context, await adapter.context());
+    const value = await adapter.read(row.path);
+    if (value !== row.remote) throw new Error(`Conflito após a comparação: ${row.path}. Compare novamente.`);
+    before.push([row.path, value]);
+  }
+  const snapshot: Snapshot = {context: plan.context, capturedAt: new Date().toISOString(), files: safeFiles(before)};
+  const journal: Journal = {version: 1, id: crypto.randomUUID(), context: plan.context, startedAt: snapshot.capturedAt, status: 'prepared', selected, verified: [], before: snapshot.files, after: safeFiles(rows.map(r => [r.path, r.local!]))};
+  try {
+    await hooks.persist(journal);
+    await hooks.backup(snapshot); // Must persist successfully BEFORE a write. A backup only covers selected paths.
+    journal.status = 'running';
+    await hooks.persist(journal);
+    for (const row of rows) {
+      check(hooks.signal);
+      assertContext(plan.context, await adapter.context());
+      journal.pending = row.path;
+      await hooks.persist(journal);
+      // Adapter checks the expected content again inside the editor immediately before saving.
+      await adapter.write(row.path, row.remote!, row.local!);
+      const saved = await adapter.read(row.path);
+      if (saved !== row.local) throw new Error(`Falha na conferência após salvar: ${row.path}`);
+      journal.verified.push(row.path);
+      delete journal.pending;
+      await hooks.persist(journal);
+      hooks.progress?.({done: journal.verified.length, total: rows.length, path: row.path, phase: 'Salvando no editor'});
+    }
+    // Reopen from the platform after reload, avoiding a false positive from CodeMirror's own buffer.
+    check(hooks.signal);
+    await adapter.refresh();
+    for (const row of rows) {
+      check(hooks.signal);
+      assertContext(plan.context, await adapter.context());
+      if (await adapter.read(row.path) !== row.local) throw new Error(`Arquivo não persistiu após recarregar: ${row.path}`);
+    }
+    journal.status = 'completed';
+    await hooks.persist(journal);
+    return journal;
+  } catch (error) {
+    journal.status = 'stopped';
+    journal.error = error instanceof Error ? error.message : String(error);
+    await hooks.persist(journal);
+    throw error;
+  }
+}
