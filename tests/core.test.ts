@@ -85,6 +85,18 @@ describe('envio com preflight, backup e conferência', () => {
     const plan = planFor(adapter, {[file]: 'b', [other]: 'b'}); adapter.files[other] = 'externo';
     await expect(applyPlan(adapter, plan, [file, other], hooks())).rejects.toThrow('Conflito'); expect(adapter.writes).toEqual([]);
   });
+  test('versão antiga em aba aberta não passa pelo preflight após reload', async () => {
+    const adapter = new FakeAdapter({[file]: 'versão em cache'}), h = hooks();
+    const plan = planFor(adapter, {[file]: 'versão local'});
+    adapter.refreshHook = () => {adapter.files[file] = 'versão atual do servidor';};
+    await expect(applyPlan(adapter, plan, [file], h)).rejects.toThrow('Conflito');
+    expect(adapter.writes).toEqual([]); expect(h.events).toEqual([]);
+  });
+  test('troca de loja durante reload bloqueia preflight', async () => {
+    const adapter = new FakeAdapter({[file]: 'a'}), plan = planFor(adapter, {[file]: 'b'});
+    adapter.refreshHook = () => {adapter.ctx.previewOrigin = 'https://outra.invalid';};
+    await expect(applyPlan(adapter, plan, [file], hooks())).rejects.toThrow('loja'); expect(adapter.writes).toEqual([]);
+  });
   test('mudança imediatamente antes de salvar não é sobrescrita', async () => {
     const adapter = new FakeAdapter({[file]: 'a'}), h = hooks();
     adapter.beforeWrite = p => {adapter.files[p] = 'externo';};

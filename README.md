@@ -79,5 +79,6 @@ O adaptador depende da estrutura visível do editor Yampi e da API pública do C
 - `tests`: comparação, ZIP, conflitos, cancelamento, envio parcial e isolamento de sessões.
 - [ROADMAP.md](docs/ROADMAP.md): validação real, criação de novos arquivos, imagens, configurações e catálogo.
 - [TERCEIROS.md](docs/TERCEIROS.md): avisos de licença dos componentes incluídos no pacote.
+- `docs/ci-example.yml`: exemplo de verificação no GitHub Actions. Não está instalado como workflow; a credencial usada na criação do repositório não possui o escopo `workflow`. Os checks desta entrega foram executados localmente.
 
 Referências: [Editor de código Yampi](https://docs.yampi.com.br/editor-codigo/intro), [regras de arquivos e publicação](https://help.yampi.com.br/pt-BR/articles/13978494-como-acessar-o-editor-de-codigo), [CodeMirror](https://codemirror.net/docs/ref/), [Manifest V3 e scripts](https://developer.chrome.com/docs/extensions/develop/concepts/content-scripts).
