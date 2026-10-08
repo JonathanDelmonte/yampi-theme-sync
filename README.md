@@ -2,7 +2,7 @@
 
 Extensão de navegador para exportar os arquivos do tema Yampi como um projeto executável no computador e salvar de volta as alterações escolhidas. Projeto independente, sem vínculo com a Yampi. Código público; arquivos e dados das lojas permanecem locais.
 
-## Estado da versão 0.2.3
+## Estado da versão 0.2.4
 
 Implementados: exportação dos textos e imagens dos assets com caminhos completos e SHA-256, projeto portátil com ferramentas Twig/Sass/Vue 2, prévia com dados fictícios, importação da pasta inteira ou ZIP de retorno, comparação entre original/local/loja, envio de textos existentes, backup antes do envio, conferência após reload, histórico por loja e restauração protegida contra alterações posteriores. Exportações antigas no formato versão 1 continuam aceitas.
 
@@ -14,7 +14,9 @@ Na cópia, a extensão abre os arquivos para leitura, sem editar, salvar, exclui
 
 O fluxo é testado em um editor fictício com Shadow DOM aberto e versões reais antiga e atual do CodeMirror, testes unitários e teste de integração em Chromium com extensão Manifest V3, worker, downloads e IndexedDB. A exportação teve zero alterações de conteúdo, salvamentos ou acionamentos de controles de exclusão, criação, renomeação e publicação nesse teste. O teste intercepta toda requisição à origem Yampi e entrega apenas o editor fictício; usa permissão de host adicional somente na cópia temporária de teste. A estrutura do componente foi conferida no módulo JavaScript público da Yampi em 08/10/2026. Posteriormente, o proprietário relatou uma exportação textual real concluída na 0.2.3: o pacote recebido foi conferido fora deste repositório público, com tamanhos e hashes preservados e ZIP de retorno aceito pelo importador. Isso não substitui comparar cada arquivo independentemente com a loja, testar redes lentas ou validar imagens e gravações reais. Nenhuma gravação na loja de um cliente foi feita para testar esta versão.
 
-O projeto real exportado não compilou na prévia local: usa dependências Sass, módulos internos e sintaxe Twig ainda não reproduzidos pelo simulador. A cópia íntegra e o ZIP de retorno são verificações distintas de executar uma loja completa localmente. O tema e seu diagnóstico ficam somente no projeto privado autorizado; a compatibilidade da prévia ainda precisa ser ampliada.
+Na 0.2.4 foram corrigidas as entradas Sass, a variável de assets fornecida pela plataforma, aliases `@/components` e bibliotecas `~/`, funções de seta no Twig, componentes Vue funcionais e helpers de execução. Fora deste repositório público, o projeto textual exportado foi compilado e suas cinco páginas foram abertas em Chromium, com componentes ativos, sem erros ou avisos Vue e sem requisições externas. Isso valida a prévia com dados fictícios usada nesse teste; não reproduz o backend ou as configurações reais da loja. Os arquivos e relatórios da loja permanecem no projeto privado.
+
+O painel global fica desativado. Somente um clique no ícone habilita o painel na aba do editor; navegar para outra página o desativa. Chrome 142 ou posterior também desativa a associação quando o painel é fechado. Em versões anteriores, retornar a uma aba onde o painel continua aberto pode mostrá-lo novamente, conforme o comportamento do navegador.
 
 Esta versão não cria, renomeia ou exclui arquivos e pastas, nem publica a loja. Arquivos novos e imagens alteradas aparecem bloqueados na comparação. A exportação de PNG/JPG/JPEG/WebP/SVG dos assets está implementada; o ciclo completo com PNG foi verificado no editor fictício. A leitura depende de uma única prévia da imagem no editor e de download sem credenciais permitido por CORS. Se uma imagem ou texto não puder ser lido integralmente, a exportação falha sem entregar um ZIP parcial como completo. Logs gerados pelo editor são excluídos do inventário do tema. Imagens de catálogo, produtos, preços, configurações visuais e dados de clientes não são exportados. Não há upload de imagens nesta versão.
 
@@ -34,7 +36,7 @@ Demonstração: http://127.0.0.1:5181/demo.html?demo=1. O servidor escuta soment
 npm run package
 ```
 
-Produz `releases/yampi-theme-sync-0.2.3.zip` com os arquivos instaláveis e o SHA-256 ao lado. O pacote usa uma lista explícita de arquivos e não inclui a demonstração nem exportações de lojas. A pasta `dist` também permite carregar a extensão sem compactar. O painel lateral requer Chrome/Edge compatível com a API `sidePanel` (Chrome 120 ou posterior); outros navegadores não foram validados.
+Produz `releases/yampi-theme-sync-0.2.4.zip` com os arquivos instaláveis e o SHA-256 ao lado. O pacote usa uma lista explícita de arquivos e não inclui a demonstração nem exportações de lojas. A pasta `dist` também permite carregar a extensão sem compactar. O painel lateral requer Chrome/Edge compatível com a API `sidePanel` (Chrome 120 ou posterior); outros navegadores não foram validados.
 
 Para executar o teste do navegador:
 
@@ -59,7 +61,9 @@ O ZIP original contém `.yampi-sync/manifest.json` e `.yampi-sync/baseline/`. N�
 
 ## Prévia no computador
 
-O projeto exportado inclui versões fixas das dependências e lockfile. `local.config.json` define páginas, entradas Sass e aliases de seções; `local.data.json` fornece dados fictícios editáveis. A prévia renderiza Twig com includes, compila Sass e registra componentes Vue 2 pelo campo `name`, incluindo estilos `scoped`. Arquivos editados são relidos ao recarregar a página. Recursos incompatíveis geram erro visível em vez de uma validação falsa. Blocos Vue com `module`, `src`, pre-processadores de template/script e plugins/mixins próprios da Yampi ainda não são simulados.
+Abra a pasta extraída no VS Code ou seu arquivo `.code-workspace`. O `README.md` explica os comandos; o código editável está em `tema/`. `.yampi-sync` é criada pela extensão e contém os originais, o manifesto com hashes e as ferramentas locais. Fica recolhida no explorador do VS Code; deve ser preservada. O pacote npm, README e workspace usam o nome lido do editor, com normalização apenas para nomes de arquivos e do pacote.
+
+O projeto inclui versões fixas das dependências e lockfile. `local.config.json` define páginas, entradas Sass globais e por página, estilos móveis e aliases de seções; `local.data.json` fornece dados fictícios editáveis por página. A prévia renderiza Twig com includes, `filter`/`map` com funções de seta, compila Sass e registra componentes Vue 2, incluindo templates funcionais e estilos `scoped`. Resolve componentes exportados e um conjunto explícito de bibliotecas, mixins e leituras simuladas. Carrosséis usam Splide; zoom e o emissor do editor têm implementações locais reduzidas. Recursos desconhecidos geram erro, sem substituição automática por módulos vazios. Blocos Vue com `module`, `src` e pre-processadores de template/script não são suportados. `npm run check` também recusa bindings Vue inválidos no HTML renderizado.
 
 É uma prévia parcial do layout, não uma cópia do backend Yampi. Ela não reproduz checkout, carrinho, catálogo ou configurações reais. O servidor escuta somente em `127.0.0.1`, recusa escrita e hosts externos, serve apenas as rotas locais previstas e bloqueia chamadas externas, formulários e recursos remotos por CSP. Twig e Sass não podem carregar arquivos fora do tema. `npm run pack` confere a origem e compacta somente `tema/` e os metadados necessários; não executa nem envia dados/ferramentas locais. Valide as páginas e funções na prévia da Yampi antes de publicar manualmente.
 

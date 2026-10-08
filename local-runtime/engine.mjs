@@ -1,10 +1,11 @@
 import path from 'node:path';
 import {readdir, readFile, lstat, realpath} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
-import Twig from 'twig';
+import {createSynchronousEnvironment, createSynchronousArrayLoader, createSynchronousFilter, createSynchronousFunction} from './twig.mjs';
+import {twigHelpers} from './platform.mjs';
 import * as sass from 'sass';
 import compiler from 'vue-template-compiler';
-import {compileStyle} from 'vue/compiler-sfc';
+import {compileStyle, compileTemplate} from 'vue/compiler-sfc';
 import {build} from 'esbuild';
 const MAX_FILE = 2 * 1024 * 1024, MAX_TOTAL = 32 * 1024 * 1024, MAX_FILES = 3000;
 const roots = ['assets', 'components', 'elements', 'sections', 'templates'];
@@ -82,24 +83,40 @@ export function textFiles(files) {
 export function renderPage(files, template, data, config = {}) {
   validPath(template);
   if (!files[template]) throw new Error(`Template não encontrado: ${template}`);
-  const twig = Twig.factory();
-  twig.extend(T => {T.Templates.unRegisterLoader('fs'); T.Templates.unRegisterLoader('ajax');});
   const localAsset = value => {
     const name = String(value).replace(/^\/+/, '').replace(/^assets\//, '');
     return '/tema/' + validPath('assets/' + name).split('/').map(encodeURIComponent).join('/');
   };
   const unsupported = name => () => {throw new Error(`Recurso ${name} depende da Yampi. Adapte a prévia local ou seus dados fictícios.`);};
-  for (const [name, fn] of Object.entries({assets_url: localAsset, bool_text: v => v ? 'true' : 'false', boolean: v => v === true || v === 'true' || v === 1, json_decode: v => JSON.parse(v), only_numbers: v => String(v).replace(/\D/g, ''), strip_mustache: v => String(v).replace(/\{\{|\}\}/g, ''), font_link: () => '', components_url: unsupported('components_url'), vendor_url: unsupported('vendor_url')})) twig.extendFilter(name, fn);
-  twig.extendFunction('get_section_file', (alias, page) => {
+  // Memory-only loader: no filesystem or network template loaders exist here.
+  const templates = Object.fromEntries(Object.entries(files).filter(([p]) => p.endsWith('.twig')));
+  templates['yampi-internals/head.twig'] ??= '<!-- Serviços internos ausentes na prévia local -->';
+  templates['yampi-internals/services/chat.twig'] ??= '<!-- Chat não é executado na prévia local -->';
+  const twig = createSynchronousEnvironment(createSynchronousArrayLoader(templates), {autoEscapingStrategy: 'html'});
+  const {filters, functions} = twigHelpers(localAsset);
+  function register(kind, name, fn) {
+    const args = Array.from({length: fn.length}, (_, i) => ({name: 'arg' + i, defaultValue: null}));
+    const wrapper = (context, ...values) => fn(...values);
+    if (kind === 'filter') twig.addFilter(createSynchronousFilter(name, wrapper, args.slice(1), {is_variadic: true}));
+    else twig.addFunction(createSynchronousFunction(name, wrapper, args, {is_variadic: true}));
+  }
+  for (const [name, fn] of Object.entries({...filters, assets_url: localAsset, vendor_url: unsupported('vendor_url')})) register('filter', name, fn);
+  for (const [name, fn] of Object.entries(functions)) register('function', name, fn);
+  register('function', 'get_section_file', (alias, page) => {
     const file = config.sections?.[`${page || data.pageConfig?.page}/${alias}`] || config.sections?.[alias];
     if (!file) throw new Error(`Configure sections[${alias}] em local.config.json.`);
     return validPath(file);
   });
-  twig.extendFunction('mix', localAsset);
-  twig.extendFunction('generate_seo', () => '');
-  for (const [name, content] of Object.entries(files).filter(([p]) => p.endsWith('.twig'))) twig.twig({id: name, data: content, allowInlineIncludes: true, rethrow: true, autoescape: true});
-  const output = twig.twig({ref: template}).render(data);
+  register('function', 'mix', localAsset);
+  register('function', 'generate_seo', () => '<title>Prévia local</title>');
+  const output = twig.render(template, data);
   return String(output);
+}
+export function validateMarkup(html) {
+  const body = /<body\b[^>]*>([\s\S]*?)<\/body>/i.exec(html)?.[1] || html;
+  const source = body.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '');
+  const result = compiler.compile('<div>' + source + '</div>');
+  if (result.errors.length) throw new Error('HTML/Vue da página inválido: ' + result.errors.join('; '));
 }
 export function compileStyles(files, entries) {
   function resolve(name, from = '') {
@@ -123,15 +140,50 @@ export function compileStyles(files, entries) {
   return entries.map(p => {
     validPath(p);
     if (files[p] === undefined) throw new Error(`Entrada Sass não encontrada: ${p}`);
-    return sass.compileString(files[p], {url: new URL('theme:' + p), importers: [importer], logger: sass.Logger.silent}).css;
+    // The platform normally supplies this variable; keep exported source intact.
+    const content = p.endsWith('.scss') ? '$assets: "/tema/assets" !default;\n' + files[p] : files[p];
+    return sass.compileString(content, {url: new URL('theme:' + p), importers: [importer], logger: sass.Logger.silent}).css;
   }).join('\n');
 }
 export async function compileComponents(files, root) {
   const components = Object.keys(files).filter(p => p.endsWith('.vue')).sort();
+  const platformFile = path.join(import.meta.dirname, 'platform-browser.mjs');
   const scripts = new Map(), css = [];
+  css.push(await readFile(path.join(root, 'node_modules/@splidejs/splide/dist/css/splide.min.css'), 'utf8'));
   const plugin = {name: 'local-vue2', setup(builder) {
+    // The portable project and the test harness must share one Vue/Vuex instance.
+    // Resolve runtime packages from the project's installation, including imports
+    // made by this tool file when it lives outside that project during a test.
+    builder.onResolve({filter: /^(vue(?:\/.*)?|vuex|lodash|js-cookie|@splidejs\/splide)$/}, args => {
+      if (args.pluginData === 'local-package') return;
+      return builder.resolve(args.path, {resolveDir: root, kind: args.kind, pluginData: 'local-package'});
+    });
     builder.onResolve({filter: /^theme:/}, args => ({path: args.path.slice(6), namespace: 'theme'}));
     builder.onResolve({filter: /^script:/}, args => ({path: args.path.slice(7), namespace: 'script'}));
+    builder.onResolve({filter: /^@\/components\//, namespace: 'script'}, args => {
+      const resolved = args.path.slice(2); validPath(resolved);
+      if (!resolved.endsWith('.vue') || files[resolved] === undefined) throw new Error(`Componente não exportado: ${args.path}`);
+      return {path: resolved, namespace: 'theme'};
+    });
+    builder.onResolve({filter: /^~\//, namespace: 'script'}, async args => {
+      const name = args.path.slice(2), packages = {vue: 'vue/dist/vue.esm.js', vuex: 'vuex', lodash: 'lodash', 'js-cookie': 'js-cookie'};
+      if (packages[name]) return builder.resolve(packages[name], {resolveDir: root, kind: args.kind});
+      if (['external-svg-loader', 'vue-debounce'].includes(name)) return {path: name, namespace: 'platform'};
+      throw new Error(`Biblioteca da plataforma não simulada: ${args.path}`);
+    });
+    builder.onResolve({filter: /^@\/(mixins|modules)\//, namespace: 'script'}, args => ({path: args.path.slice(2), namespace: 'platform'}));
+    builder.onLoad({filter: /.*/, namespace: 'platform'}, args => {
+      const header = `import * as local from ${JSON.stringify(platformFile)};`;
+      let content;
+      if (/^mixins\/(mobile|merchant|product|productCardTheme|prices|helpers|buttons|cache|cashback|errors|queryParams|touchable)$/.test(args.path)) content = `export default local.mixins[${JSON.stringify(args.path.slice(7))}]; export const uuidv4 = local.uuidv4, getImageMeta = local.getImageMeta, debounce = local.debounce, smoothScroll = local.smoothScroll, createPriceObjects = local.createPriceObjects, isLinkSameStoreDomain = local.isLinkSameStoreDomain;`;
+      else if (/^modules\/axios\/(api|rocket|search)$/.test(args.path)) content = 'export default local.client;';
+      else if (args.path === 'modules/eventBus') content = 'export default local.eventBus;';
+      else if (args.path === 'modules/SearchAttributesHandler') content = 'export default local.SearchAttributesHandler;';
+      else if (args.path === 'modules/search/searchHelpers') content = 'export const builderSearch = local.builderSearch, urlSearch = local.urlSearch;';
+      else if (['external-svg-loader', 'vue-debounce'].includes(args.path)) content = 'export default {};';
+      else throw new Error(`Módulo da plataforma não simulado: @/${args.path}`);
+      return {contents: header + content, loader: 'js', resolveDir: root};
+    });
     builder.onResolve({filter: /^\.\.?\//, namespace: 'script'}, args => {
       const resolved = path.posix.normalize(path.posix.join(path.posix.dirname(args.importer), args.path));
       validPath(resolved);
@@ -143,7 +195,8 @@ export async function compileComponents(files, root) {
       validPath(args.path);
       const descriptor = compiler.parseComponent(files[args.path]);
       if (descriptor.script?.src || descriptor.template?.src || descriptor.script?.lang || descriptor.template?.lang || descriptor.customBlocks.length) throw new Error(`Bloco Vue não suportado na prévia: ${args.path}`);
-      const compiled = compiler.compile(descriptor.template?.content || '<span></span>');
+      const functional = descriptor.template?.attrs.functional !== undefined;
+      const compiled = compileTemplate({source: descriptor.template?.content || '<span></span>', filename: args.path, compiler, isFunctional: functional});
       if (compiled.errors.length) throw new Error(`${args.path}: ${compiled.errors.join('; ')}`);
       scripts.set(args.path, descriptor.script?.content || 'export default {}');
       const scope = 'data-v-' + digest(args.path).slice(0, 8);
@@ -155,25 +208,25 @@ export async function compileComponents(files, root) {
         if (scoped.errors.length) throw new Error(`${args.path}: ${scoped.errors.join('; ')}`);
         css.push(scoped.code);
       }
-      return {contents: `import component from ${JSON.stringify('script:' + args.path)}; component.render = new Function(${JSON.stringify(compiled.render)}); component.staticRenderFns = ${JSON.stringify(compiled.staticRenderFns)}.map(code => new Function(code)); ${descriptor.styles.some(s => s.scoped) ? 'component._scopeId = ' + JSON.stringify(scope) + ';' : ''} export default component;`, loader: 'js', resolveDir: root};
+      return {contents: `import component from ${JSON.stringify('script:' + args.path)}; ${compiled.code}\ncomponent.render = render; component.staticRenderFns = staticRenderFns; component._compiled = true; ${functional ? 'component.functional = true;' : ''} ${descriptor.styles.some(s => s.scoped) ? 'component._scopeId = ' + JSON.stringify(scope) + ';' : ''} export default component;`, loader: 'js', resolveDir: root};
     });
   }};
-  const entry = `import Vue from 'vue/dist/vue.esm.js';\n${components.map((p, i) => `import C${i} from ${JSON.stringify('theme:' + p)};`).join('\n')}
-    Vue.config.productionTip = false;
+  const entry = `import Vue from 'vue/dist/vue.esm.js';
+    import {setup, report} from ${JSON.stringify(platformFile)};
+    const data = await (await fetch('/__local/data.json' + location.search)).json();
+    const store = setup(data);
+    ${components.map((p, i) => `const C${i} = (await import(${JSON.stringify('theme:' + p)})).default;`).join('\n')}
     const known = new Set();
     ${components.map((p, i) => `{
-      const name = C${i}.name || ${JSON.stringify(path.posix.basename(p, '.vue'))};
-      if (known.has(name)) throw new Error('Componentes com o mesmo name: ' + name);
-      known.add(name); Vue.component(name, C${i});
+      const filename = ${JSON.stringify(path.posix.basename(p, '.vue'))};
+      const name = C${i}.name || filename;
+      Vue.component(filename, C${i});
+      if (!known.has(name)) {known.add(name); Vue.component(name, C${i});}
+      else if (name !== filename) console.warn('Alias Vue duplicado: ' + name + '; use o nome do arquivo.');
     }`).join('\n')}
-    const data = await (await fetch('/__local/data.json')).json();
-    window.merchant = data.merchantData; window.product = data.product; window.Yampi = {local: true};
-    Vue.prototype.$formatMoney = value => Number(value).toLocaleString('pt-BR', {style:'currency', currency:'BRL'});
-    Vue.config.errorHandler = (error) => {const notice = document.createElement('pre'); notice.textContent = 'Erro Vue local: ' + error.message; document.body.prepend(notice);};
     const target = document.querySelector('#yampi-local-root');
-    if (target) new Vue({el: target});
-    document.addEventListener('submit', event => event.preventDefault(), true);
-    document.addEventListener('click', event => {const link = event.target.closest('a'); if (link && new URL(link.href).origin !== location.origin) event.preventDefault();}, true);
+    if (target) {window.__yampiLocalApp = new Vue({el: target, store}); window.__yampiLocalReady = !(window.__yampiLocalMessages || []).some(m => m.error);}
+    else report('Raiz da prévia não encontrada.', true);
   `;
   const result = await build({stdin: {contents: entry, resolveDir: root, sourcefile: 'local-entry.js'}, nodePaths: [path.join(root, 'node_modules')], bundle: true, write: false, format: 'esm', platform: 'browser', target: 'chrome120', plugins: [plugin], define: {'process.env.NODE_ENV': '"development"'}, logLevel: 'silent'});
   return {js: result.outputFiles[0].text, css: css.join('\n')};

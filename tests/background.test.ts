@@ -4,7 +4,8 @@ let stored: Record<string, Session>, tabs: Map<number, {id: number; url: string}
 let chromeMock: typeof chrome, clicked: (tab: chrome.tabs.Tab) => Promise<void>, removed: (id: number) => Promise<void>;
 let listener: (message: unknown, sender: chrome.runtime.MessageSender, response: (r: unknown) => void) => boolean;
 let connect: (port: chrome.runtime.Port) => void;
-let updated: Set<(id: number, change: {status?: string}) => void>;
+let updated: Set<(id: number, change: {status?: string; url?: string}) => void>;
+let panelClosed: (info: {tabId?: number}) => void;
 const extId = 'fictitious-test-extension', url = 'https://app.yampi.com.br/store/code-editor/';
 function sender(token: string, documentId?: string): chrome.runtime.MessageSender {
   return {id: extId, url: `chrome-extension://${extId}/panel.html?tab=${stored[token]?.tabId || 1}`, documentId};
@@ -35,7 +36,7 @@ beforeEach(async () => {
       getContexts: vi.fn(async (filter: {documentIds?: string[]; contextTypes?: string[]; documentUrls?: string[]}) => [...contexts.values()].filter(c => (!filter.documentIds || filter.documentIds.includes(c.documentId!)) && (!filter.documentUrls || filter.documentUrls.includes(c.documentUrl!)) && (!filter.contextTypes || filter.contextTypes.includes(c.contextType)))),
       onMessage: {addListener: vi.fn(fn => {listener = fn;})}, onConnect: {addListener: vi.fn(fn => {connect = fn;})}},
     action: {onClicked: {addListener: vi.fn(fn => {clicked = fn;})}, setBadgeText: vi.fn(async () => {}), setTitle: vi.fn(async () => {})},
-    sidePanel: {open: vi.fn(async () => {}), setOptions: vi.fn(async () => {})},
+    sidePanel: {open: vi.fn(async () => {}), setOptions: vi.fn(async () => {}), onClosed: {addListener: vi.fn(fn => {panelClosed = fn;})}},
     storage: {session: {
       get: vi.fn(async (key: string | null) => structuredClone(key === null ? stored : {[key]: stored[key]})),
       set: vi.fn(async (values: Record<string, Session>) => {Object.assign(stored, structuredClone(values));}),
@@ -52,6 +53,22 @@ beforeEach(async () => {
 });
 afterEach(() => {vi.unstubAllGlobals();});
 describe('painel lateral, permissões e isolamento do editor', () => {
+  test('painel global desativado: trocar de aba nunca habilita outro painel', async () => {
+    expect(chromeMock.sidePanel.setOptions).toHaveBeenCalledWith({enabled: false});
+    await open(1);
+    for (const fn of updated) fn(2, {url: 'https://outro.invalid/'});
+    expect(chromeMock.sidePanel.setOptions).toHaveBeenLastCalledWith({tabId: 2, enabled: false});
+    expect(chromeMock.sidePanel.open).toHaveBeenCalledTimes(1);
+  });
+  test('fechar desativa a aba até um novo clique, sem encerrar gravação em andamento', async () => {
+    const token = await open(); await message(token, {action: 'lock', access: 'write'});
+    panelClosed({tabId: 1});
+    expect(chromeMock.sidePanel.setOptions).toHaveBeenLastCalledWith({tabId: 1, enabled: false});
+    expect(stored[token].locked).toBe(true);
+    for (const fn of updated) fn(1, {url: 'https://app.yampi.com.br/store/'});
+    expect(chromeMock.sidePanel.setOptions).toHaveBeenLastCalledWith({tabId: 1, enabled: false});
+    expect(chromeMock.sidePanel.open).toHaveBeenCalledTimes(1);
+  });
   test('fora do editor não abre painel e não injeta código', async () => {
     await clicked({id: 1, url: 'https://outro.invalid/'} as chrome.tabs.Tab);
     expect(chromeMock.sidePanel.open).not.toHaveBeenCalled(); expect(chromeMock.scripting.executeScript).not.toHaveBeenCalled();
@@ -144,11 +161,11 @@ describe('painel lateral, permissões e isolamento do editor', () => {
     const token = await open(); await message(token, {action: 'lock'}); let response = false;
     vi.mocked(chromeMock.tabs.reload).mockImplementation(async () => {});
     const wait = message(token, {action: 'refresh'}).then(value => {response = true; return value;});
-    await vi.waitFor(() => expect(updated.size).toBe(1));
+    await vi.waitFor(() => expect(updated.size).toBe(2));
     for (const fn of updated) fn(1, {status: 'complete'});
     await Promise.resolve(); expect(response).toBe(false);
     for (const fn of updated) {fn(1, {status: 'loading'}); fn(1, {status: 'complete'});}
-    expect((await wait).ok).toBe(true); expect(updated.size).toBe(0);
+    expect((await wait).ok).toBe(true); expect(updated.size).toBe(1);
   });
   test('navegação da origem invalida a sessão', async () => {
     const token = await open(); await message(token, {action: 'lock'}); tabs.get(1)!.url = 'https://app.yampi.com.br/store/themes';

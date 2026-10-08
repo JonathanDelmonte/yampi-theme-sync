@@ -15,7 +15,7 @@ export async function encodeSnapshot(snapshot: Snapshot, project = false): Promi
     manifest.files.push({path, sha256: await hashBytes(bytes), bytes: bytes.length, kind: source.assets?.[path] ? 'image' : 'text'});
   }
   entries[metaPath] = strToU8(JSON.stringify(manifest, null, 2));
-  if (project) for (const [path, value] of Object.entries(localKit(Object.keys(source.files)))) entries[path] = strToU8(value);
+  if (project) for (const [path, value] of Object.entries(localKit(Object.keys(source.files), source.context.storeName))) entries[path] = strToU8(value);
   return zipSync(entries, {level: 6});
 }
 function safeArchivePath(path: string): void {

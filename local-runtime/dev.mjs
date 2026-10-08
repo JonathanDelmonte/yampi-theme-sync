@@ -1,6 +1,6 @@
 import http from 'node:http';
 import path from 'node:path';
-import {readProject, safeRead, textFiles, renderPage, compileStyles, compileComponents, digest} from './engine.mjs';
+import {readProject, safeRead, textFiles, renderPage, validateMarkup, validPath, compileStyles, compileComponents, digest} from './engine.mjs';
 const escape = text => String(text).replace(/[&<>"']/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
 const types = {png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', svg: 'image/svg+xml', css: 'text/css; charset=utf-8'};
 export async function loadLocal(root) {
@@ -13,18 +13,30 @@ export async function loadLocal(root) {
 export async function validateLocal(root) {
   const {text, config, data} = await loadLocal(root);
   compileStyles(text, config.styles);
+  compileStyles(text, config.mobileStyles || []);
+  for (const entries of Object.values(config.pageStyles || {})) compileStyles(text, entries);
+  for (const entries of Object.values(config.mobilePageStyles || {})) compileStyles(text, entries);
   await compileComponents(text, root);
-  for (const [page, template] of Object.entries(config.pages)) renderPage(text, template, {...data, pageConfig: {...data.pageConfig, page}}, config);
+  for (const [page, template] of Object.entries(config.pages)) validateMarkup(renderPage(text, template, pageData(data, page), config));
   return Object.keys(config.pages).length;
+}
+export function pageData(data, page) {
+  const output = {...data, page, pageConfig: {...data.pageConfig, page}};
+  if (data.mainSectionsByPage) output.mainSections = data.mainSectionsByPage[page] || [];
+  if (data.sections && !Array.isArray(data.sections)) {output.header = data.header || data.sections.header; output.footer = data.footer || data.sections.footer;}
+  if (data.pages?.[page]) Object.assign(output, data.pages[page]);
+  return output;
 }
 export async function createLocalServer(root) {
   const initial = await loadLocal(root);
   let cached;
-  async function assets(text, config) {
-    const signature = digest(JSON.stringify({text, styles: config.styles}));
+  async function assets(text, config, page = 'home') {
+    const signature = digest(JSON.stringify({text, config, page}));
     if (cached?.signature === signature) return cached;
     const components = await compileComponents(text, root);
-    cached = {signature, js: components.js, css: compileStyles(text, config.styles) + '\n' + components.css};
+    const mobile = [...(config.mobileStyles || []), ...(config.mobilePageStyles?.[page] || [])];
+    const css = compileStyles(text, [...config.styles, ...(config.pageStyles?.[page] || [])]) + '\n' + components.css + (mobile.length ? '\n@media (max-width:700px){\n' + compileStyles(text, mobile) + '\n}' : '');
+    cached = {signature, js: components.js, css: css.replace(/@import\s+(?:url\([^)]*\)|["'][^"']*["'])[^;]*;/gi, '').replace(/@font-face\s*\{[^}]*\}/gi, '')};
     return cached;
   }
   const server = http.createServer(async (req, res) => {
@@ -37,26 +49,37 @@ export async function createLocalServer(root) {
     try {
       const url = new URL(req.url, 'http://127.0.0.1');
       const {project, text, config, data} = await loadLocal(root);
-      if (url.pathname === '/__local/data.json') {send(200, 'application/json', JSON.stringify(data)); return;}
+      if (url.pathname === '/__local/data.json') {send(200, 'application/json', JSON.stringify(pageData(data, url.searchParams.get('page') || 'home'))); return;}
+      if (url.pathname === '/__local/empty.css' || url.pathname === '/__local/empty.js') {send(200, url.pathname.endsWith('.js') ? 'text/javascript' : 'text/css', ''); return;}
+      if (url.pathname === '/__local/placeholder.svg') {send(200, 'image/svg+xml', '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 400"><rect width="640" height="400" fill="#e8e8e8"/><text x="320" y="205" text-anchor="middle" fill="#666" font-size="24" font-family="sans-serif">Imagem fictícia · prévia local</text></svg>'); return;}
       if (url.pathname === '/__local/app.js' || url.pathname === '/__local/style.css') {
-        const built = await assets(text, config);
+        const built = await assets(text, config, url.searchParams.get('page') || 'home');
         send(200, url.pathname.endsWith('.js') ? 'text/javascript' : 'text/css', url.pathname.endsWith('.js') ? built.js : built.css); return;
       }
       if (url.pathname.startsWith('/tema/assets/')) {
-        const name = decodeURIComponent(url.pathname.slice(6));
+        const name = validPath(decodeURIComponent(url.pathname.slice(6)));
         const type = types[name.split('.').at(-1)?.toLowerCase()];
-        if (!type || !project.files[name]) {send(404, 'text/plain', 'Asset não encontrado.'); return;}
+        if (!type || !project.files[name]) {
+          if (/^assets\/.*\.(svg|png|jpe?g|webp)$/i.test(name) && !name.includes('..')) {send(200, 'image/svg+xml', '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><rect x="3" y="3" width="18" height="18" rx="4" fill="#ddd"/></svg>'); return;}
+          send(404, 'text/plain', 'Asset não encontrado.'); return;
+        }
         res.setHeader('Content-Security-Policy', "sandbox; default-src 'none'; style-src 'unsafe-inline'");
         send(200, type, project.files[name]); return;
       }
       if (url.pathname === '/preview') {
         const page = url.searchParams.get('page') || 'home', template = config.pages[page];
         if (typeof template !== 'string') {send(404, 'text/plain', 'Página não configurada.'); return;}
-        await assets(text, config);
-        let html = renderPage(text, template, {...data, pageConfig: {...data.pageConfig, page}}, config);
+        await assets(text, config, page);
+        let html = renderPage(text, template, pageData(data, page), config);
         // Remove meta refresh and base redirects. Browser CSP blocks remote scripts, fetch and forms.
         html = html.replace(/<meta\b[^>]*http-equiv\s*=\s*["']?refresh["']?[^>]*>/gi, '').replace(/<base\b[^>]*>/gi, '');
-        const head = '<link rel="stylesheet" href="/__local/style.css">';
+        // Remote/platform scripts are not part of the portable application.
+        // Vue executes only the compiled bundle. Keep inline CSS from the theme.
+        html = html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '').replace(/<link\b[^>]*\b(?:rel=["'](?:preload|prefetch|manifest)["']|href=["'](?:https?:)?\/\/)[^>]*>/gi, '');
+        html = html.replace(/(?:src|data-src)=["'](?:https?:)?\/\/[^"']*["']/gi, 'src="/__local/placeholder.svg"');
+        html = html.replace(/\/__local\/style\.css/g, '/__local/style.css?page=' + encodeURIComponent(page));
+        validateMarkup(html);
+        const head = '<link rel="stylesheet" href="/__local/style.css?page=' + encodeURIComponent(page) + '"><style>#yampi-local-notice{font:14px system-ui;background:#fff3d6;color:#453817;padding:12px;position:sticky;top:0;z-index:99999}#yampi-local-notice[data-error="true"]{background:#fce9e5;color:#a52f18}</style>';
         const tail = '<script type="module" src="/__local/app.js"></script>';
         if (/<body\b/i.test(html)) html = html.replace(/(<body\b[^>]*>)/i, '$1<div id="yampi-local-root">').replace(/<\/body>/i, '</div>' + tail + '</body>');
         else html = '<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">' + head + '</head><body><div id="yampi-local-root">' + html + '</div>' + tail + '</body></html>';

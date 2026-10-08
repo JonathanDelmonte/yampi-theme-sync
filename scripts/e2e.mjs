@@ -34,6 +34,7 @@ try {
   browser.setDefaultTimeout(30000);
   console.log('E2E: Chromium e extensão iniciados.');
   const worker = browser.serviceWorkers()[0] || await browser.waitForEvent('serviceworker');
+  assert.equal((await worker.evaluate(() => chrome.sidePanel.getOptions({}))).enabled, false);
   const extensionId = worker.url().split('/')[2];
   const html = (await readFile(path.join(repository, 'dist/fixture.html'), 'utf8')).replace('<script src="bridge.js"></script>', '').replace('</body>', `<iframe id="test-toolbar" src="chrome-extension://${extensionId}/test-launcher.html"></iframe></body>`);
   const fixtureJs = await readFile(path.join(repository, 'dist/fixture.js'));
@@ -85,7 +86,7 @@ try {
   await panel.screenshot({path: path.join(repository, '.cache/panel-export-e2e.png')});
   console.log('E2E: exportação com PNG e texto integral conferida.');
   const entries = unzipSync(new Uint8Array(await readFile(exportPath)));
-  assert.equal(Object.keys(entries).filter(p => p.startsWith('tema/')).length, 9);
+  assert.equal(Object.keys(entries).filter(p => p.startsWith('tema/')).length, 10);
   assert.ok(new TextDecoder().decode(entries['tema/templates/long.twig']).includes('Linha 2000'));
   assert.ok(entries['tema/assets/images/example.png'].length > 0);
   assert.equal(await editor.evaluate(() => window.fictitiousUnchanged()), true);
@@ -129,7 +130,13 @@ try {
   await preview.waitForFunction(() => document.querySelector('button')?.textContent?.includes('Clique para testar'));
   await preview.locator('button').click(); assert.match(await preview.locator('button').textContent(), /1/);
   assert.equal(await preview.locator('button').evaluate(button => getComputedStyle(button).borderTopColor), 'rgb(32, 99, 79)');
-  assert.equal(await preview.locator('img').evaluate(img => img.complete && img.naturalWidth > 0), true);
+  assert.equal(await preview.getByRole('img', {name: 'Imagem fictícia'}).evaluate(img => img.complete && img.naturalWidth > 0), true);
+  assert.equal(await preview.locator('a[href="#exemplo-local"]').textContent(), 'Link fictício · slot funciona');
+  await preview.locator('.image-state').filter({hasText:'Imagem carregada'}).waitFor();
+  await preview.locator('.splide__slide').click();
+  assert.equal(await preview.locator('.gallery-state').textContent(), 'Galeria clicada');
+  assert.equal(await preview.evaluate(() => window.__yampiLocalReady), true);
+  assert.deepEqual(await preview.evaluate(() => window.__yampiLocalMessages || []), []);
   console.log('E2E: Vue interativo e PNG local conferidos.');
   await writeFile(path.join(project, 'tema/elements/head.twig'), '<meta name="description" content="Editado localmente">\n');
   await writeFile(path.join(project, 'tema/templates/new.twig'), '<p>Arquivo novo bloqueado</p>\n');
@@ -144,7 +151,7 @@ try {
   await panel.locator('#folder').setInputFiles(folderImport, {timeout: 15000});
   console.log('E2E: pasta selecionada.');
   await panel.waitForFunction(() => document.querySelector('#status').textContent === 'Comparação concluída');
-  assert.match(await panel.locator('#local-info').textContent(), /9 textos e 1 imagem/);
+  assert.match(await panel.locator('#local-info').textContent(), /10 textos e 1 imagem/);
   await panel.locator('#baseline').setInputFiles(path.join(project, 'retorno-yampi.zip'));
   await panel.waitForFunction(() => !document.querySelector('#baseline').disabled);
   await panel.waitForFunction(() => document.querySelector('#status').textContent === 'Comparação concluída');
@@ -214,8 +221,9 @@ try {
   if (browser) for (const worker of browser.serviceWorkers()) console.error('Diagnóstico fictício:', JSON.stringify(await worker.evaluate(async () => ({contexts: await chrome.runtime.getContexts({}), sessions: await chrome.storage.session.get(null), tabs: await Promise.all((await chrome.tabs.query({})).map(async t => ({url:t.url, title:await chrome.action.getTitle({tabId:t.id})})))})).catch(() => 'Worker indisponível'),null,2));
   await mkdir(path.join(repository, '.cache'), {recursive: true});
   if (panel) {
-    await panel.screenshot({path: path.join(repository, '.cache/panel-e2e-error.png'), fullPage: true}).catch(() => {});
-    console.error('Estado do painel:', await panel.locator('#status').textContent().catch(() => ''), await panel.locator('#detail').textContent().catch(() => ''));
+    // A tab-scoped panel may be hidden while the preview tab is active. A
+    // diagnostic screenshot must never prevent cleanup of a failed test.
+    await Promise.race([panel.screenshot({path: path.join(repository, '.cache/panel-e2e-error.png'), fullPage: true}), new Promise((_, reject) => setTimeout(() => reject(new Error('Painel oculto')), 5000))]).catch(() => {});
   }
   throw error;
 } finally {

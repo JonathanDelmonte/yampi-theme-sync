@@ -19,6 +19,6 @@ São dados distintos dos arquivos do tema. Planejar exportação de configuraç�
 
 Histórico de envios isolado por loja, originais independentes, projeto local portátil, check de compilação e importação da pasta inteira/ZIP estão implementados na 0.2. Ampliar a compatibilidade Twig/Sass/Vue 2 e simular plugins próprios exige exemplos fictícios das estruturas suportadas. Recuperação de uma exportação interrompida, comparação por linhas e identificação oficial de tema ainda podem ser adicionadas. O proprietário autorizou o código público; projetos e dados das lojas continuam excluídos deste repositório público.
 
-## Próxima release: nome do projeto exportado
+## Nome do projeto exportado — implementado na 0.2.4
 
-O ZIP já usa o nome da loja no nome do download e preserva essa identidade no manifesto, mas o pacote local ainda recebe o nome genérico `yampi-local-project`. Usar o nome da loja para identificar o pacote e a pasta do projeto, com normalização de caracteres e caminhos Windows. Permitir que o nome local seja diferente do nome de origem sem alterar o contexto da sincronização. Projetos de lojas podem ser enviados a repositórios privados somente quando seu proprietário solicitar; continuam separados deste repositório público.
+O nome exato lido do editor é preservado no manifesto, no README e nos dados de prévia. O pacote npm e o workspace do VS Code recebem uma versão normalizada desse nome, respeitando nomes reservados do Windows. O nome local pode ser alterado sem modificar a identidade da sincronização. O ZIP mantém sua estrutura portátil, com `tema/` como pasta editável. Projetos de lojas podem ser enviados a repositórios privados somente quando seu proprietário solicitar; continuam separados deste repositório público.

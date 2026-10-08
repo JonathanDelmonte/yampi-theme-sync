@@ -99,6 +99,20 @@ export async function openEditorPanel(tab: chrome.tabs.Tab): Promise<void> {
   }
 }
 chrome.action.onClicked.addListener(openEditorPanel);
+// A manifest default_path enables a global panel on every tab. Keep the default
+// disabled; only an explicit toolbar click enables the selected editor tab.
+void chrome.sidePanel.setOptions({enabled: false}).catch(() => {});
+chrome.tabs.onUpdated.addListener((id, change) => {
+  if (change.url && !allowed(change.url)) void chrome.sidePanel.setOptions({tabId: id, enabled: false}).catch(() => {});
+});
+// onClosed is available in Chrome 142+. Older supported versions still benefit
+// from the global default being disabled and navigation being scoped to the tab.
+const panelEvents = chrome.sidePanel as typeof chrome.sidePanel & {
+  onClosed?: {addListener: (listener: (info: {tabId?: number}) => void) => void};
+};
+panelEvents.onClosed?.addListener(info => {
+  if (info.tabId !== undefined) void chrome.sidePanel.setOptions({tabId: info.tabId, enabled: false}).catch(() => {});
+});
 chrome.runtime.onConnect.addListener(port => {
   const token = port.name.startsWith('panel:') ? port.name.slice(6) : '';
   if (!token || !port.sender || !panelSender(port.sender)) return;
@@ -161,7 +175,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!cmd || !['context', 'inventory', 'read', 'readAsset', 'write'].includes(cmd.op)) throw new Error('Comando não permitido.');
     if (cmd.op === 'write' && session.access !== 'write') throw new Error('Esta operação permite apenas copiar. Gravação bloqueada.');
     const [existing] = await chrome.scripting.executeScript({target: {tabId: session.tabId}, world: 'MAIN', func: () => {
-      return (window as unknown as {YampiThemeSyncBridge?: {version?: string}}).YampiThemeSyncBridge?.version === '0.2.3';
+      return (window as unknown as {YampiThemeSyncBridge?: {version?: string}}).YampiThemeSyncBridge?.version === '0.2.4';
     }});
     if (!existing?.result) await chrome.scripting.executeScript({target: {tabId: session.tabId}, world: 'MAIN', files: ['bridge.js']});
     const results = await chrome.scripting.executeScript({target: {tabId: session.tabId}, world: 'MAIN', func: async command => {

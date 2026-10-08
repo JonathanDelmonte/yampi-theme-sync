@@ -15,7 +15,8 @@ describe('projeto executável e retorno completo', () => {
     const bytes = await encodeSnapshot(clone(), true), entries = unzipSync(bytes);
     expect(entries['package-lock.json']).toBeDefined();
     expect(entries['.yampi-sync/tools/dev.mjs']).toBeDefined();
-    expect(JSON.parse(new TextDecoder().decode(entries['local.data.json'])).merchantData.manifest.name).toBe('Loja local fictícia');
+    expect(JSON.parse(new TextDecoder().decode(entries['local.data.json'])).merchantData.manifest.name).toBe(demoSnapshot.context.storeName);
+    expect(entries['README.md']).toBeDefined(); expect(entries['loja-de-testes.code-workspace']).toBeDefined();
     const result = await decodeProject(bytes);
     expect(result.baseline).toEqual(demoSnapshot); expect(result.localAssets[imagePath]).toEqual(demoImage);
   });
