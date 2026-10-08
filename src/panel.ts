@@ -86,11 +86,11 @@ function controls(): void {
     input.disabled = working || plan?.rows.find(r => r.path === path)?.status !== 'update';
   });
 }
-async function run(job: () => Promise<void>, needsEditor = true, prepare?: () => Promise<void>): Promise<void> {
+async function run(job: () => Promise<void>, needsEditor = true, prepare?: () => Promise<void>, access: 'read' | 'write' = 'read'): Promise<void> {
   if (working) return;
   working = true; controller = new AbortController(); controls();
   let locked = false;
-  try {await prepare?.(); if (needsEditor) {await rpc({action: 'lock'}); locked = true;} await job();}
+  try {await prepare?.(); if (needsEditor) {await rpc({action: 'lock', access}); locked = true;} await job();}
   catch (error) {status('Operação interrompida', error instanceof Error ? error.message : String(error), true);}
   finally {
     if (locked) await rpc({action: 'unlock'}).catch(() => {});
@@ -242,7 +242,7 @@ $('apply').addEventListener('click', () => void run(async () => {
   });
   $('review').hidden = true; $('diff').hidden = true;
   status('Arquivos salvos e conferidos após recarregar', 'Abra Ver prévia na Yampi e valide a loja. A extensão não publicou as alterações.');
-}));
+}, true, undefined, 'write'));
 $('download-backup').addEventListener('click', () => void run(async () => {
   const stored = await get<{journalId: string; bytes: Uint8Array}>(`backup:${journal?.id}`);
   if (!stored || stored.journalId !== journal?.id) throw new Error('O backup deste envio não foi concluído. Consulte o registro ou a exportação original.');
@@ -279,15 +279,17 @@ async function connect(): Promise<void> {
   history = await journalHistory(context); journal = history[0] || await get<Journal>('journal');
   if (journal) try {assertContext(journal.context, context);} catch {journal = undefined;}
   if (journal && !history.length) {await saveJournal(journal); const backup = await get('lastBackup'); if (backup) await put(`backup:${journal.id}`, backup);}
-  await updateHistory(); journalInfo(); status('Editor conectado', 'Baixe os arquivos da loja ou selecione Enviar alterações para importar o projeto editado.');
-  const auto = !isDemo && await rpc({action: 'auto-export'});
-  if (auto) await exportProject();
+  await updateHistory(); journalInfo(); status('Editor conectado', 'A cópia aguarda sua confirmação. Confira a loja e clique em Confirmar e baixar ZIP para começar.');
   }, true, async () => {if (connection) {await connection.connect(); session = connection.token;}});
   if (!connected) $('store').textContent = 'Editor indisponível';
 }
 $('retry').addEventListener('click', () => void connect());
 if (!isDemo && editorTab) chrome.runtime.onMessage.addListener(message => {
-  if (message?.editorClicked === session && !working) void run(async () => {if (await rpc({action: 'auto-export'})) await exportProject();});
+  if (message?.editorClicked === session && !working) {
+    mode(false);
+    if (!connected) void connect();
+    else status('Aguardando sua confirmação', 'Clique em Confirmar e baixar ZIP para copiar os arquivos para o computador.');
+  }
 });
 if (isDemo || editorTab) await connect();
 else {status('Abra pelo ícone da extensão', 'No editor de código da Yampi, clique no ícone para conectar e baixar o tema.'); controls();}

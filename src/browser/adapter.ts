@@ -1,6 +1,6 @@
 import type {Adapter, Context} from '../core/model';
 import type {Command} from './bridge';
-export type RPC = (request: {action?: string; command?: Command}) => Promise<unknown>;
+export type RPC = (request: {action?: string; access?: 'read' | 'write'; command?: Command}) => Promise<unknown>;
 export class BrowserAdapter implements Adapter {
   private expected?: Context;
   constructor(readonly rpc: RPC) {}

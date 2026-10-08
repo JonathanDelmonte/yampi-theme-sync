@@ -1,7 +1,8 @@
-import {assertContext, safeFiles, safeSnapshot, imagePath, writable, validatePaths, MAX_TOTAL_BYTES, MAX_FILE_BYTES, type Assets, type Adapter, type Snapshot, type Progress, type Plan, type Journal} from './model';
+import {assertContext, safeFiles, safeSnapshot, imagePath, writable, validatePaths, MAX_TOTAL_BYTES, MAX_FILE_BYTES, type Assets, type Adapter, type ReadAdapter, type Snapshot, type Progress, type Plan, type Journal} from './model';
 type Hooks = {signal?: AbortSignal; progress?: (p: Progress) => void};
 function check(signal?: AbortSignal) {if (signal?.aborted) throw new Error('Cancelado. Os arquivos já salvos não foram desfeitos.');}
-export async function capture(adapter: Adapter, hooks: Hooks = {}): Promise<Snapshot> {
+export async function capture(adapter: ReadAdapter, hooks: Hooks = {}): Promise<Snapshot> {
+  if (hooks.signal?.aborted) throw new Error('Cópia cancelada. Nenhum arquivo da loja foi alterado.');
   const context = await adapter.context();
   const paths = (await adapter.inventory()).sort();
   validatePaths(paths);
@@ -11,7 +12,7 @@ export async function capture(adapter: Adapter, hooks: Hooks = {}): Promise<Snap
   let total = 0;
   let done = 0;
   for (const path of paths) {
-    check(hooks.signal);
+    if (hooks.signal?.aborted) throw new Error('Cópia cancelada. Nenhum arquivo da loja foi alterado.');
     assertContext(context, await adapter.context());
     if (imagePath(path)) {
       if (!adapter.readAsset) throw new Error(`O adaptador não consegue exportar a imagem: ${path}`);
@@ -26,6 +27,7 @@ export async function capture(adapter: Adapter, hooks: Hooks = {}): Promise<Snap
     if (total > MAX_TOTAL_BYTES) throw new Error('O tema ultrapassa o limite de 32 MiB.');
     hooks.progress?.({done: ++done, total: paths.length, path, phase: 'Lendo arquivos'});
   }
+  if (hooks.signal?.aborted) throw new Error('Cópia cancelada. Nenhum arquivo da loja foi alterado.');
   assertContext(context, await adapter.context());
   const end = (await adapter.inventory()).sort();
   if (JSON.stringify(paths) !== JSON.stringify(end)) throw new Error('A árvore de arquivos mudou durante a leitura. Exporte novamente.');

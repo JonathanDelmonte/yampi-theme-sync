@@ -65,6 +65,25 @@ function hooks() {
   const events: string[] = [], journals: Journal[] = [];
   return {events, journals, persist: async (j: Journal) => {events.push('persist:' + j.status); journals.push(structuredClone(j));}, backup: async () => {events.push('backup');}};
 }
+describe('cópia somente para leitura', () => {
+  test('preserva conteúdos e não acessa nenhuma capacidade de gravação/reload', async () => {
+    const source = {[file]: '\ufeffação\n', 'templates/empty.twig': '', 'templates/long.twig': 'linha\n'.repeat(2000)};
+    const adapter = new FakeAdapter(source);
+    Object.defineProperty(adapter, 'write', {get: () => {throw new Error('Gravação proibida durante a cópia');}});
+    Object.defineProperty(adapter, 'refresh', {get: () => {throw new Error('Reload proibido durante a cópia');}});
+    const copied = await capture(adapter); expect(copied.files).toEqual(source); expect(adapter.files).toEqual(source);
+  });
+  test('falha de leitura não modifica arquivos nem entrega uma cópia parcial', async () => {
+    const adapter = new FakeAdapter({[file]: 'original'}); adapter.read = async () => {throw new Error('Modelo inacessível');};
+    await expect(capture(adapter)).rejects.toThrow('Modelo inacessível');
+    expect(adapter.files[file]).toBe('original'); expect(adapter.writes).toEqual([]); expect(adapter.refreshed).toBe(false);
+  });
+  test('cancelar no último arquivo impede a entrega sem alterar a loja', async () => {
+    const adapter = new FakeAdapter({[file]: 'original'}), controller = new AbortController();
+    await expect(capture(adapter, {signal: controller.signal, progress: () => controller.abort()})).rejects.toThrow('Cópia cancelada');
+    expect(adapter.files[file]).toBe('original'); expect(adapter.writes).toEqual([]);
+  });
+});
 describe('envio com preflight, backup e conferência', () => {
   test('não grava nada antes de persistir o registro e o backup', async () => {
     const adapter = new FakeAdapter({[file]: 'a'}), h = hooks();
@@ -142,6 +161,6 @@ describe('captura da árvore inteira', () => {
   });
   test('cancelamento não entrega snapshot parcial', async () => {
     const adapter = new FakeAdapter({[file]: 'a'}), controller = new AbortController(); controller.abort();
-    await expect(capture(adapter, {signal: controller.signal})).rejects.toThrow('Cancelado');
+    await expect(capture(adapter, {signal: controller.signal})).rejects.toThrow('Cópia cancelada');
   });
 });

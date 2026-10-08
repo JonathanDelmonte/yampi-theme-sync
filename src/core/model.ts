@@ -30,6 +30,7 @@ export interface Adapter {
   write(path: string, expected: string, content: string): Promise<void>;
   refresh(): Promise<void>;
 }
+export type ReadAdapter = Pick<Adapter, 'context' | 'inventory' | 'read' | 'readAsset'>;
 export interface Progress {done: number; total: number; path: string; phase: string}
 export interface Journal {
   version: 1; id: string; context: Context; startedAt: string;

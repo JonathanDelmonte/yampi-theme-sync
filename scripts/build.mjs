@@ -20,7 +20,7 @@ const html = await readFile(path.join(root, 'extension/panel.html'), 'utf8');
 await writeFile(path.join(dist, 'demo.html'), html);
 await cp(path.join(root, 'src/demo/fixture.html'), path.join(dist, 'fixture.html'));
 let notices = '# Componentes de terceiros\n\nLicenças dos componentes incluídos nos arquivos JavaScript da extensão. Ferramentas usadas apenas para desenvolvimento não são distribuídas no pacote.\n';
-for (const name of ['fflate', '@codemirror/view', '@codemirror/state', '@marijn/find-cluster-break', 'crelt', 'style-mod', 'w3c-keyname']) {
+for (const name of ['fflate']) {
   const folder = path.join(root, 'node_modules', name);
   const pkg = JSON.parse(await readFile(path.join(folder, 'package.json'), 'utf8'));
   const license = await readFile(path.join(folder, 'LICENSE'), 'utf8');

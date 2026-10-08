@@ -1,6 +1,6 @@
 {
   "name": "yampi-theme-sync",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "private": true,
   "type": "module",
   "engines": {
@@ -19,6 +19,7 @@
   "devDependencies": {
     "@codemirror/state": "^6.5.2",
     "@codemirror/view": "^6.38.0",
+    "@codemirror/view-legacy": "npm:@codemirror/view@6.36.2",
     "@types/chrome": "^0.1.0",
     "@types/node": "^24.0.0",
     "esbuild": "^0.28.2",

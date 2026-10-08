@@ -1,5 +1,5 @@
 import type {Command} from './bridge';
-type Session = {tabId: number; editorUrl: string; documentId?: string; locked: boolean; autoExport: boolean};
+type Session = {tabId: number; editorUrl: string; documentId?: string; locked: boolean; access?: 'read' | 'write'};
 const inFlight = new Map<string, Set<Promise<unknown>>>();
 const ports = new Map<string, Set<Promise<string>>>();
 let sessionQueue = Promise.resolve();
@@ -83,10 +83,10 @@ export async function openEditorPanel(tab: chrome.tabs.Tab): Promise<void> {
       const busy = sameTab.find(([, value]) => (value as Session).locked);
       if (busy) return busy[0];
       const previous = sameTab.find(([, value]) => (value as Session).editorUrl === tab.url);
-      if (previous) {await chrome.storage.session.set({[previous[0]]: {...previous[1] as Session, autoExport: true}}); return previous[0];}
+      if (previous) return previous[0];
       for (const [key] of sameTab) await chrome.storage.session.remove(key);
       const key = crypto.randomUUID();
-      await chrome.storage.session.set({[key]: {tabId: tab.id!, editorUrl: tab.url!, locked: false, autoExport: true} satisfies Session});
+      await chrome.storage.session.set({[key]: {tabId: tab.id!, editorUrl: tab.url!, locked: false} satisfies Session});
       return key;
     });
     await configuring; await opening;
@@ -116,7 +116,7 @@ chrome.runtime.onConnect.addListener(port => {
         if (!session || session.documentId !== documentId) return;
         const liveOwners = await Promise.all([...(ports.get(token) || [])].map(p => p.catch(() => undefined)));
         if (liveOwners.includes(documentId)) return;
-        session.locked = false; delete session.documentId;
+        session.locked = false; delete session.documentId; delete session.access;
         await chrome.storage.session.set({[token]: session});
       });
     })().catch(() => {});
@@ -143,26 +143,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const tab = await chrome.tabs.get(session.tabId);
     if (!allowed(tab.url) || tab.url !== session.editorUrl) throw new Error('A aba de origem mudou. Clique novamente no ícone dentro do editor correto.');
     if (message.action === 'heartbeat') return null;
-    if (['lock', 'unlock', 'auto-export'].includes(message.action)) return serialize(async () => {
+    if (['lock', 'unlock'].includes(message.action)) return serialize(async () => {
       const current = await getSession(token);
       if (!current || current.documentId !== session.documentId) throw new Error('Sessão encerrada. Clique na extensão novamente.');
-      if (message.action === 'auto-export') {
-        const claimed = current.autoExport; current.autoExport = false;
-        await chrome.storage.session.set({[token]: current}); return claimed;
-      }
       if (message.action === 'lock') {
+        if (message.access !== undefined && !['read', 'write'].includes(message.access)) throw new Error('Permissão da operação inválida.');
         const all = await chrome.storage.session.get(null);
         if (Object.entries(all).some(([key, value]) => key !== token && (value as Session).tabId === current.tabId && (value as Session).locked)) throw new Error('Outro painel está trabalhando neste editor.');
       }
       current.locked = message.action === 'lock';
+      if (current.locked) current.access = message.access || 'read'; else delete current.access;
       await chrome.storage.session.set({[token]: current}); return null;
     });
     if (!session.locked) throw new Error('Inicie uma operação antes de acessar o editor.');
     if (message.action === 'refresh') {await reloadEditor(session.tabId); return null;}
     const cmd = message.command as Command;
     if (!cmd || !['context', 'inventory', 'read', 'readAsset', 'write'].includes(cmd.op)) throw new Error('Comando não permitido.');
+    if (cmd.op === 'write' && session.access !== 'write') throw new Error('Esta operação permite apenas copiar. Gravação bloqueada.');
     const [existing] = await chrome.scripting.executeScript({target: {tabId: session.tabId}, world: 'MAIN', func: () => {
-      return (window as unknown as {YampiThemeSyncBridge?: {version?: string}}).YampiThemeSyncBridge?.version === '0.2.2';
+      return (window as unknown as {YampiThemeSyncBridge?: {version?: string}}).YampiThemeSyncBridge?.version === '0.2.3';
     }});
     if (!existing?.result) await chrome.scripting.executeScript({target: {tabId: session.tabId}, world: 'MAIN', files: ['bridge.js']});
     const results = await chrome.scripting.executeScript({target: {tabId: session.tabId}, world: 'MAIN', func: async command => {

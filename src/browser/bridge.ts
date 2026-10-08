@@ -1,7 +1,8 @@
-import {EditorView} from '@codemirror/view';
+import type {EditorView} from '@codemirror/view';
+import {editorView, readDocument} from './editor-document';
 import {assertContext, validatePath, validatePaths, validateImage, imagePath, writable, MAX_FILE_BYTES, type Context} from '../core/model';
 export interface Command {op: 'context' | 'inventory' | 'read' | 'readAsset' | 'write'; context?: Context; path?: string; expected?: string; content?: string}
-export const version = '0.2.2';
+export const version = '0.2.3';
 type Reply = {ok: true; value: unknown} | {ok: false; error: string};
 const clean = (e: Element | null) => e?.textContent?.trim() || '';
 type EditorRoot = ShadowRoot | HTMLElement;
@@ -101,9 +102,7 @@ async function completeInventory(context: Context): Promise<string[]> {
 function view(): EditorView {
   const contents = root().querySelectorAll<HTMLElement>('main .cm-content');
   if (contents.length !== 1) throw new Error('Editor CodeMirror não reconhecido; nenhuma operação realizada.');
-  const instance = EditorView.findFromDOM(contents[0]);
-  if (!instance) throw new Error('Não foi possível ler o documento completo do CodeMirror.');
-  return instance;
+  return editorView(contents[0]);
 }
 function dirty(): boolean {
   const buttons = [...root().querySelectorAll<HTMLButtonElement>('main button')].filter(b => clean(b) === 'Salvar arquivo');
@@ -148,7 +147,7 @@ async function open(path: string, context: Context): Promise<void> {
   await until(() => {
     guard(context);
     if (selectedPath() !== path || root().querySelector('main [aria-busy="true"], main .loading, main .spinner, main .loader-bg')) {stable = 0; return false;}
-    const value = imagePath(path) ? visibleImage().src : view().state.doc.toString();
+    const value = imagePath(path) ? visibleImage().src : readDocument(view());
     stable = value === last ? stable + 1 : 0;
     last = value;
     return stable >= 4;
@@ -202,7 +201,7 @@ export async function command(input: Command): Promise<Reply> {
     if (input.op === 'readAsset' && imagePath(input.path)) return {ok: true, value: await readImage(input.path, context)};
     if (imagePath(input.path)) throw new Error('Imagens são exportadas para uso local; envio binário está bloqueado.');
     const editor = view();
-    const old = editor.state.doc.toString();
+    const old = readDocument(editor);
     if (input.op === 'read') return {ok: true, value: old};
     if (input.op !== 'write' || typeof input.content !== 'string' || typeof input.expected !== 'string') throw new Error('Comando inválido.');
     if (!writable(input.path) || new TextEncoder().encode(input.content).length > MAX_FILE_BYTES || input.content.includes('\u0000')) throw new Error('Tipo de arquivo não permitido para envio.');
@@ -213,7 +212,7 @@ export async function command(input: Command): Promise<Reply> {
     editor.dispatch({changes: {from: 0, to: editor.state.doc.length, insert: input.content}});
     await until(() => !findButton('Salvar arquivo').disabled);
     guard(context);
-    if (selectedPath() !== input.path || editor.state.doc.toString() !== input.content) throw new Error('O arquivo foi alterado durante a operação. Gravação interrompida.');
+    if (selectedPath() !== input.path || readDocument(editor) !== input.content) throw new Error('O arquivo foi alterado durante a operação. Gravação interrompida.');
     const save = findButton('Salvar arquivo');
     save.click();
     await until(() => {
@@ -221,7 +220,7 @@ export async function command(input: Command): Promise<Reply> {
       return save.disabled && !save.querySelector('.loading, .spinner, .button__loader, .button__spinner') && !root().querySelector('main [aria-busy="true"]');
     }, 20000);
     // Do not click publish, delete, rename, or create controls. A separate fresh-page verification follows.
-    if (view().state.doc.toString() !== input.content) throw new Error('Conteúdo diferente após salvar.');
+    if (readDocument(view()) !== input.content) throw new Error('Conteúdo diferente após salvar.');
     return {ok: true, value: {saved: true}};
   } catch (error) {return {ok: false, error: error instanceof Error ? error.message : String(error)};}
   finally {busy = false; activeRoot = undefined;}

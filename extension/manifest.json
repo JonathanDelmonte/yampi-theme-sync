@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Yampi Theme Sync",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "minimum_chrome_version": "120",
   "description": "Exporta e compara arquivos do tema Yampi. Envia alterações selecionadas com backup, sem publicar a loja.",
   "permissions": ["activeTab", "scripting", "storage", "downloads", "sidePanel"],

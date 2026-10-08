@@ -1,5 +1,5 @@
 import {beforeEach, afterEach, describe, test, expect, vi} from 'vitest';
-type Session = {tabId: number; editorUrl: string; documentId?: string; locked: boolean; autoExport: boolean};
+type Session = {tabId: number; editorUrl: string; documentId?: string; locked: boolean; access?: 'read' | 'write'};
 let stored: Record<string, Session>, tabs: Map<number, {id: number; url: string}>, contexts: Map<string, chrome.runtime.ExtensionContext>, injected: Set<number>;
 let chromeMock: typeof chrome, clicked: (tab: chrome.tabs.Tab) => Promise<void>, removed: (id: number) => Promise<void>;
 let listener: (message: unknown, sender: chrome.runtime.MessageSender, response: (r: unknown) => void) => boolean;
@@ -84,13 +84,28 @@ describe('painel lateral, permissões e isolamento do editor', () => {
     await message(token, {action: 'lock'}); context(token, 'another-document');
     expect((await message(token, {action: 'lock'}, sender(token, 'another-document'))).error).toContain('Outro painel');
   });
-  test('exportação automática é consumida só uma vez, inclusive simultaneamente', async () => {
-    const token = await open(); const replies = await Promise.all([message(token, {action: 'auto-export'}), message(token, {action: 'auto-export'})]);
-    expect(replies.map(r => r.value).sort()).toEqual([false, true]);
-    expect((await message(token, {action: 'auto-export'})).value).toBe(false);
+  test('abrir e reabrir não autoriza extração automática nem leitura de arquivos', async () => {
+    const token = await open(); await open();
+    expect(stored[token].locked).toBe(false); expect(stored[token].access).toBeUndefined();
+    expect((await message(token, {action: 'auto-export'})).ok).toBe(false);
+    expect(chromeMock.scripting.executeScript).not.toHaveBeenCalled();
   });
   test('sem lock não lê e não grava', async () => {
     const token = await open(); expect((await message(token, {command: {op: 'write'}})).ok).toBe(false); expect(chromeMock.scripting.executeScript).not.toHaveBeenCalled();
+  });
+  test('lock de leitura bloqueia gravação antes de injetar qualquer comando', async () => {
+    const token = await open(); await message(token, {action: 'lock', access: 'read'});
+    expect((await message(token, {command: {op: 'write', path: 'templates/home.twig', expected: 'a', content: ''}})).error).toContain('apenas copiar');
+    expect(chromeMock.scripting.executeScript).not.toHaveBeenCalled();
+    await message(token, {action: 'unlock'}); await message(token, {action: 'lock'});
+    expect((await message(token, {command: {op: 'write'}})).ok).toBe(false);
+  });
+  test('permissão de envio expira ao terminar e não fica disponível para a cópia', async () => {
+    const token = await open(); await message(token, {action: 'lock', access: 'write'});
+    expect((await message(token, {command: {op: 'write'}})).ok).toBe(true);
+    await message(token, {action: 'unlock'}); expect(stored[token].access).toBeUndefined();
+    await message(token, {action: 'lock', access: 'read'});
+    expect((await message(token, {command: {op: 'write'}})).ok).toBe(false);
   });
   test('heartbeat exige painel e aba corretos e não injeta nem altera locks', async () => {
     const token = await open(), other = await open(2);
@@ -110,8 +125,8 @@ describe('painel lateral, permissões e isolamento do editor', () => {
   test('novo clique durante operação reutiliza a sessão', async () => {
     const token = await open(); await message(token, {action: 'lock'});
     expect(await open()).toBe(token); expect(Object.keys(stored)).toHaveLength(1);
-    await message(token, {action: 'unlock'}); await message(token, {action: 'auto-export'}); expect(await open()).toBe(token);
-    expect(stored[token].autoExport).toBe(true);
+    await message(token, {action: 'unlock'}); expect(await open()).toBe(token);
+    expect(stored[token].locked).toBe(false); expect(stored[token].access).toBeUndefined();
   });
   test('handshake identifica só a sessão da aba indicada pelo painel nativo', async () => {
     const a = await open(), b = await open(2);
@@ -151,7 +166,7 @@ describe('painel lateral, permissões e isolamento do editor', () => {
     expect(vi.mocked(chromeMock.scripting.executeScript).mock.calls.filter(([r]) => 'files' in r)).toHaveLength(1);
   });
   test('fechar painel espera a gravação pendente antes de liberar a sessão', async () => {
-    const token = await open(); const close = port(token); await message(token, {action: 'lock'});
+    const token = await open(); const close = port(token); await message(token, {action: 'lock', access: 'write'});
     let finish!: () => void;
     vi.mocked(chromeMock.scripting.executeScript).mockImplementationOnce(() => new Promise(resolve => {finish = () => resolve([{result: true}]);}));
     const writing = message(token, {command: {op: 'write', path: 'templates/home.twig'}});

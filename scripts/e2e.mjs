@@ -2,7 +2,7 @@ import {chromium} from 'playwright';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import os from 'node:os';
-import {mkdtemp, mkdir, writeFile, readFile, cp, rm} from 'node:fs/promises';
+import {mkdtemp, mkdir, writeFile, readFile, readdir, cp, rm} from 'node:fs/promises';
 import {spawn} from 'node:child_process';
 import {unzipSync, zipSync, strToU8} from 'fflate';
 import {createLocalServer} from '../local-runtime/dev.mjs';
@@ -26,7 +26,7 @@ try {
   manifest.host_permissions = ['https://app.yampi.com.br/*'];
   manifest.background.service_worker = 'test-worker.js';
   manifest.web_accessible_resources = [{resources: ['test-launcher.html', 'test-launcher.js'], matches: ['https://app.yampi.com.br/*']}];
-  await writeFile(path.join(extension, 'test-worker.js'), `import {openEditorPanel} from './background.js'; const panels = new Set(); globalThis.testDisconnectPanels = () => {for (const port of panels) port.disconnect(); panels.clear();}; chrome.runtime.onConnect.addListener(port => {panels.add(port); port.onDisconnect.addListener(() => panels.delete(port));}); globalThis.testHeartbeats = 0; chrome.runtime.onMessage.addListener((message, sender, reply) => {if (message?.action === 'heartbeat') globalThis.testHeartbeats++; if (message?.testToolbarClick && sender.url === chrome.runtime.getURL('test-launcher.html') && sender.tab) {void openEditorPanel(sender.tab).then(() => reply(true)); return true;}});`);
+  await writeFile(path.join(extension, 'test-worker.js'), `import {openEditorPanel} from './background.js'; const panels = new Set(); globalThis.testDisconnectPanels = () => {for (const port of panels) port.disconnect(); panels.clear();}; chrome.runtime.onConnect.addListener(port => {panels.add(port); port.onDisconnect.addListener(() => panels.delete(port));}); globalThis.testHeartbeats = 0; globalThis.testRequests = []; chrome.runtime.onMessage.addListener((message, sender, reply) => {if (message?.action === 'heartbeat') globalThis.testHeartbeats++; if (message?.command || message?.action === 'lock') globalThis.testRequests.push(message.command?.op || 'lock:' + message.access); if (message?.testToolbarClick && sender.url === chrome.runtime.getURL('test-launcher.html') && sender.tab) {void openEditorPanel(sender.tab).then(() => reply(true)); return true;}});`);
   await writeFile(path.join(extension, 'test-launcher.html'), '<button id="open">Clique do ícone (teste fictício)</button><script src="test-launcher.js"></script>');
   await writeFile(path.join(extension, 'test-launcher.js'), `document.querySelector('button').onclick = () => chrome.runtime.sendMessage({testToolbarClick:true}); document.body.dataset.ready='true';`);
   await writeFile(path.join(extension, 'manifest.json'), JSON.stringify(manifest));
@@ -58,13 +58,22 @@ try {
     root.querySelector('header a span').textContent = 'Abrir prévia';
   });
   const downloads = path.join(temporary, 'downloads'); await mkdir(downloads);
+  await mkdir(path.join(repository, '.cache'), {recursive: true});
   const driver = await nativePanelDriver(browser, downloads);
   const pagesBefore = browser.pages().length;
-  const exported = driver.waitDownload();
   await editor.frameLocator('#test-toolbar').locator('body[data-ready="true"]').waitFor();
   await editor.frameLocator('#test-toolbar').locator('#open').click();
   panel = await driver.attach();
   console.log('E2E: painel lateral nativo iniciado pelo handler do ícone.');
+  await panel.waitForFunction(() => document.querySelector('#status').textContent === 'Editor conectado');
+  assert.deepEqual(await editor.evaluate(() => {const root = document.querySelector('yampi-code-editor').shadowRoot; return [root.querySelectorAll('.selected').length, root.querySelectorAll('.cm-content').length];}), [0, 0]);
+  assert.deepEqual(await readdir(downloads), []);
+  assert.ok((await worker.evaluate(() => globalThis.testRequests)).every(op => ['context', 'lock:read'].includes(op)));
+  await editor.frameLocator('#test-toolbar').locator('#open').click();
+  await panel.waitForFunction(() => document.querySelector('#status').textContent === 'Aguardando sua confirmação');
+  assert.deepEqual(await readdir(downloads), []);
+  await panel.screenshot({path: path.join(repository, '.cache/panel-confirm-e2e.png')});
+  const exported = driver.waitDownload(); await panel.locator('#export').click();
   await panel.waitForFunction(() => ['ZIP da loja baixado', 'Operação interrompida'].includes(document.querySelector('#status').textContent));
   assert.equal(await panel.locator('#status').textContent(), 'ZIP da loja baixado', await panel.locator('#detail').textContent());
   const download = await exported, exportPath = path.join(temporary, 'export.zip'); await download.saveAs(exportPath);
@@ -79,6 +88,11 @@ try {
   assert.equal(Object.keys(entries).filter(p => p.startsWith('tema/')).length, 9);
   assert.ok(new TextDecoder().decode(entries['tema/templates/long.twig']).includes('Linha 2000'));
   assert.ok(entries['tema/assets/images/example.png'].length > 0);
+  assert.equal(await editor.evaluate(() => window.fictitiousUnchanged()), true);
+  assert.deepEqual(await editor.evaluate(() => window.fictitiousOperations), {dispatch: 0, save: 0, forbidden: 0});
+  assert.ok((await worker.evaluate(() => globalThis.testRequests)).every(op => ['context', 'inventory', 'read', 'readAsset', 'lock:read'].includes(op)));
+  assert.ok(await editor.evaluate(() => !!document.querySelector('yampi-code-editor').shadowRoot.querySelector('.cm-content').cmView), 'O fluxo principal deve usar a associação antiga do CodeMirror.');
+  console.log('E2E: confirmação exigida; cópia sem edições, saves ou controles destrutivos no CodeMirror 6.36.2.');
   console.log('E2E: Shadow DOM, títulos alterados e controles externos ignorados.');
   const guards = await editor.evaluate(async () => {
     const bridge = window.YampiThemeSyncBridge, host = document.querySelector('yampi-code-editor'), root = host.shadowRoot;
@@ -146,7 +160,7 @@ try {
   assert.match(await editor.locator('#test-info').textContent(), /Publicações: 0/);
   assert.equal(await editor.evaluate(() => JSON.parse(sessionStorage.getItem('fixture-files'))['elements/head.twig']), '<meta name="description" content="Editado localmente">\n');
   await panel.reload(); await panel.waitForFunction(() => document.querySelector('#status').textContent === 'Editor conectado');
-  assert.equal(await worker.evaluate(async () => Object.values(await chrome.storage.session.get(null))[0].autoExport), false);
+  assert.equal(await worker.evaluate(async () => Object.values(await chrome.storage.session.get(null))[0].access), undefined);
   assert.match(await panel.locator('#journal-info').textContent(), /1\/1/);
   await panel.evaluate(() => document.querySelector('.recovery').open = true);
   await panel.locator('#restore').click(); await panel.waitForFunction(() => document.querySelector('#status').textContent === 'Restauração preparada para revisão');
@@ -183,7 +197,19 @@ try {
   await mkdir(path.join(repository, '.cache'), {recursive: true});
   await panel.screenshot({path: path.join(repository, '.cache/panel-e2e.png'), fullPage: true});
   await preview.screenshot({path: path.join(repository, '.cache/local-preview-e2e.png'), fullPage: true});
-  console.log('E2E aprovado: Shadow DOM, títulos alterados, isolamento do componente/loja, painel lateral nativo sem nova aba, exportação automática integral, erro de conexão visível e retry, PNG, projeto portátil com npm ci, Twig/Sass/Vue 2, importação de pasta/ZIP com comparação automática, envio com backup/reload, histórico, conflito na restauração e zero publicações. Nenhuma requisição alcançou a Yampi.');
+  // Also exercise the newer CodeMirror version against the same production bridge with fictitious data.
+  const currentEditor = await browser.newPage(); await currentEditor.goto('https://app.yampi.com.br/store/code-editor/?codemirror=current');
+  await currentEditor.waitForFunction(() => document.querySelector('yampi-code-editor')?.shadowRoot?.querySelector('aside .file-name'));
+  await currentEditor.addScriptTag({content: await readFile(path.join(repository, 'dist/bridge.js'), 'utf8')});
+  const currentRead = await currentEditor.evaluate(async () => {
+    const bridge = window.YampiThemeSyncBridge; await bridge.command({op: 'inventory'});
+    const value = await bridge.command({op: 'read', path: 'templates/long.twig'});
+    return {value, current: !!document.querySelector('yampi-code-editor').shadowRoot.querySelector('.cm-content').cmTile, unchanged: window.fictitiousUnchanged(), operations: window.fictitiousOperations};
+  });
+  assert.equal(currentRead.value.ok, true); assert.equal(currentRead.current, true); assert.equal(currentRead.unchanged, true);
+  assert.equal(currentRead.value.value, new TextDecoder().decode(entries['tema/templates/long.twig']));
+  assert.deepEqual(currentRead.operations, {dispatch: 0, save: 0, forbidden: 0});
+  console.log('E2E aprovado: confirmação antes da cópia, CodeMirror antigo e atual, zero mutações na exportação, Shadow DOM, isolamento de loja/componente, erro de conexão e retry, PNG, projeto portátil com npm ci, Twig/Sass/Vue 2, importação de pasta/ZIP, envio com backup/reload e restauração. Nenhuma requisição alcançou a Yampi.');
 } catch (error) {
   if (browser) for (const worker of browser.serviceWorkers()) console.error('Diagnóstico fictício:', JSON.stringify(await worker.evaluate(async () => ({contexts: await chrome.runtime.getContexts({}), sessions: await chrome.storage.session.get(null), tabs: await Promise.all((await chrome.tabs.query({})).map(async t => ({url:t.url, title:await chrome.action.getTitle({tabId:t.id})})))})).catch(() => 'Worker indisponível'),null,2));
   await mkdir(path.join(repository, '.cache'), {recursive: true});
