@@ -6,9 +6,10 @@ import {mkdtemp, mkdir, writeFile, readFile, cp, rm} from 'node:fs/promises';
 import {spawn} from 'node:child_process';
 import {unzipSync, zipSync, strToU8} from 'fflate';
 import {createLocalServer} from '../local-runtime/dev.mjs';
+import {nativePanelDriver} from './side-panel-test.mjs';
 const repository = path.resolve(import.meta.dirname, '..');
 const temporary = await mkdtemp(path.join(os.tmpdir(), 'yampi-e2e-ficticio-'));
-let browser, localServer;
+let browser, localServer, panel;
 async function command(cmd, args, cwd) {
   await new Promise((resolve, reject) => {
     const child = spawn(cmd, args, {cwd, stdio: 'pipe'}); let log = '';
@@ -23,11 +24,18 @@ try {
   const manifest = JSON.parse(await readFile(path.join(extension, 'manifest.json'), 'utf8'));
   // Test-only permission. Every HTTP request to this origin is fulfilled below by the fixture; nothing reaches Yampi.
   manifest.host_permissions = ['https://app.yampi.com.br/*'];
+  manifest.background.service_worker = 'test-worker.js';
+  manifest.web_accessible_resources = [{resources: ['test-launcher.html', 'test-launcher.js'], matches: ['https://app.yampi.com.br/*']}];
+  await writeFile(path.join(extension, 'test-worker.js'), `import {openEditorPanel} from './background.js'; chrome.runtime.onMessage.addListener((message, sender, reply) => {if (message?.testToolbarClick && sender.url === chrome.runtime.getURL('test-launcher.html') && sender.tab) {void openEditorPanel(sender.tab).then(() => reply(true)); return true;}});`);
+  await writeFile(path.join(extension, 'test-launcher.html'), '<button id="open">Clique do ícone (teste fictício)</button><script src="test-launcher.js"></script>');
+  await writeFile(path.join(extension, 'test-launcher.js'), `document.querySelector('button').onclick = () => chrome.runtime.sendMessage({testToolbarClick:true}); document.body.dataset.ready='true';`);
   await writeFile(path.join(extension, 'manifest.json'), JSON.stringify(manifest));
   browser = await chromium.launchPersistentContext(path.join(temporary, 'browser'), {channel: 'chromium', headless: true, acceptDownloads: true, args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`]});
   browser.setDefaultTimeout(30000);
   console.log('E2E: Chromium e extensão iniciados.');
-  const html = (await readFile(path.join(repository, 'dist/fixture.html'), 'utf8')).replace('<script src="bridge.js"></script>', '');
+  const worker = browser.serviceWorkers()[0] || await browser.waitForEvent('serviceworker');
+  const extensionId = worker.url().split('/')[2];
+  const html = (await readFile(path.join(repository, 'dist/fixture.html'), 'utf8')).replace('<script src="bridge.js"></script>', '').replace('</body>', `<iframe id="test-toolbar" src="chrome-extension://${extensionId}/test-launcher.html"></iframe></body>`);
   const fixtureJs = await readFile(path.join(repository, 'dist/fixture.js'));
   await browser.route('**/*', async route => {
     const url = new URL(route.request().url());
@@ -37,32 +45,25 @@ try {
     if (url.origin === 'http://127.0.0.1:5182') return route.continue();
     return route.abort();
   });
-  const worker = browser.serviceWorkers()[0] || await browser.waitForEvent('serviceworker');
-  const extensionId = worker.url().split('/')[2];
   const editor = await browser.newPage(); await editor.goto('https://app.yampi.com.br/store/code-editor/');
   await editor.locator('#test-info').waitFor();
-  const session = await worker.evaluate(async () => {
-    const [tab] = await chrome.tabs.query({url: 'https://app.yampi.com.br/store/code-editor/'});
-    const token = crypto.randomUUID();
-    const panel = await chrome.tabs.create({url: chrome.runtime.getURL('panel.html')});
-    await chrome.storage.session.set({[token]: {tabId: tab.id, editorUrl: tab.url, panelId: panel.id, locked: false}});
-    return {token, panelId: panel.id};
-  });
-  const panel = await browser.newPage();
-  // Bind the actual created panel tab, just like the action handler; a different tab would be rejected.
-  await panel.goto(`chrome-extension://${extensionId}/panel.html`);
-  await worker.evaluate(async s => {
-    const tabs = await chrome.tabs.query({});
-    const tab = tabs.filter(t => t.url === chrome.runtime.getURL('panel.html')).at(-1);
-    const value = (await chrome.storage.session.get(s.token))[s.token];
-    value.panelId = tab.id; await chrome.storage.session.set({[s.token]: value});
-  }, session);
-  await panel.goto(`chrome-extension://${extensionId}/panel.html?session=${session.token}`);
-  await panel.waitForFunction(() => document.querySelector('#status').textContent === 'Editor conectado');
-  console.log('E2E: worker conectado ao editor fictício.');
-  const exported = panel.waitForEvent('download'); await panel.locator('#export').click();
+  const downloads = path.join(temporary, 'downloads'); await mkdir(downloads);
+  const driver = await nativePanelDriver(browser, downloads);
+  const pagesBefore = browser.pages().length;
+  const exported = driver.waitDownload();
+  await editor.frameLocator('#test-toolbar').locator('body[data-ready="true"]').waitFor();
+  await editor.frameLocator('#test-toolbar').locator('#open').click();
+  panel = await driver.attach();
+  console.log('E2E: painel lateral nativo iniciado pelo handler do ícone.');
+  await panel.waitForFunction(() => ['ZIP da loja baixado', 'Operação interrompida'].includes(document.querySelector('#status').textContent));
+  assert.equal(await panel.locator('#status').textContent(), 'ZIP da loja baixado', await panel.locator('#detail').textContent());
   const download = await exported, exportPath = path.join(temporary, 'export.zip'); await download.saveAs(exportPath);
-  await panel.waitForFunction(() => document.querySelector('#status').textContent === 'Projeto local exportado');
+  assert.equal(browser.pages().length, pagesBefore, 'O clique não pode abrir outra aba.');
+  assert.equal(await panel.evaluate(() => document.querySelector('#send-section').hidden), true);
+  const nativeContexts = await worker.evaluate(() => chrome.runtime.getContexts({contextTypes:['SIDE_PANEL']}));
+  assert.ok(nativeContexts.some(c => c.documentUrl.includes('panel.html?tab=')));
+  await mkdir(path.join(repository, '.cache'), {recursive: true});
+  await panel.screenshot({path: path.join(repository, '.cache/panel-export-e2e.png')});
   console.log('E2E: exportação com PNG e texto integral conferida.');
   const entries = unzipSync(new Uint8Array(await readFile(exportPath)));
   assert.equal(Object.keys(entries).filter(p => p.startsWith('tema/')).length, 9);
@@ -90,26 +91,30 @@ try {
   for (const relative of ['tema', '.yampi-sync']) await cp(path.join(project, relative), path.join(folderImport, relative), {recursive: true});
   await mkdir(path.join(folderImport, 'node_modules'), {recursive: true});
   await writeFile(path.join(folderImport, 'node_modules/ignored.txt'), 'Dependência fictícia não enviada');
-  await panel.bringToFront();
+  await editor.bringToFront(); await panel.locator('#mode-import').click();
   await panel.waitForFunction(() => !document.querySelector('#folder').disabled);
   await panel.locator('#folder').setInputFiles(folderImport, {timeout: 15000});
   console.log('E2E: pasta selecionada.');
-  await panel.waitForFunction(() => document.querySelector('#status').textContent === 'Pasta local carregada');
-  assert.match(await panel.locator('#local-info').textContent(), /9 textos e 1 imagens/);
+  await panel.waitForFunction(() => document.querySelector('#status').textContent === 'Comparação concluída');
+  assert.match(await panel.locator('#local-info').textContent(), /9 textos e 1 imagem/);
   await panel.locator('#baseline').setInputFiles(path.join(project, 'retorno-yampi.zip'));
-  await panel.waitForFunction(() => document.querySelector('#status').textContent === 'Projeto ZIP carregado');
-  await panel.locator('#compare').click();
+  await panel.waitForFunction(() => !document.querySelector('#baseline').disabled);
   await panel.waitForFunction(() => document.querySelector('#status').textContent === 'Comparação concluída');
   assert.match(await panel.locator('#summary').textContent(), /1 prontos/);
   assert.match(await panel.locator('#rows').textContent(), /Novo arquivo · bloqueado/);
+  assert.equal(await panel.evaluate(() => document.querySelector('#send-section').hidden), false);
+  assert.equal(await panel.evaluate(() => document.querySelector('#apply').disabled), true);
+  await panel.screenshot({path: path.join(repository, '.cache/panel-import-e2e.png')});
   await panel.locator('#confirm-store').fill('Loja de testes');
-  const backup = panel.waitForEvent('download'); await panel.locator('#apply').click(); await (await backup).saveAs(path.join(temporary, 'backup.zip'));
+  const backup = driver.waitDownload(); await panel.locator('#apply').click(); await (await backup).saveAs(path.join(temporary, 'backup.zip'));
   await panel.waitForFunction(() => document.querySelector('#status').textContent === 'Arquivos salvos e conferidos após recarregar');
   console.log('E2E: envio, backup e reload conferidos.');
   assert.match(await editor.locator('#test-info').textContent(), /Publicações: 0/);
   assert.equal(await editor.evaluate(() => JSON.parse(sessionStorage.getItem('fixture-files'))['elements/head.twig']), '<meta name="description" content="Editado localmente">\n');
   await panel.reload(); await panel.waitForFunction(() => document.querySelector('#status').textContent === 'Editor conectado');
+  assert.equal(await worker.evaluate(async () => Object.values(await chrome.storage.session.get(null))[0].autoExport), false);
   assert.match(await panel.locator('#journal-info').textContent(), /1\/1/);
+  await panel.evaluate(() => document.querySelector('.recovery').open = true);
   await panel.locator('#restore').click(); await panel.waitForFunction(() => document.querySelector('#status').textContent === 'Restauração preparada para revisão');
   assert.match(await panel.locator('#summary').textContent(), /1 prontos/);
   // A remote edit after the send must be protected during restore.
@@ -117,6 +122,14 @@ try {
   await panel.locator('#restore').click(); await panel.waitForFunction(() => document.querySelector('#status').textContent === 'Restauração preparada para revisão');
   assert.match(await panel.locator('#summary').textContent(), /1 conflitos/);
   console.log('E2E: conflito na restauração protegido.');
+  // Nested header is accepted; ambiguous identity is rejected without masking the error.
+  await editor.evaluate(() => {const label = document.createElement('span'); label.id = 'ambiguous'; label.textContent = 'Outra identificação'; document.querySelector('#shop-name').after(label);});
+  await panel.reload(); await panel.waitForFunction(() => document.querySelector('#status').textContent === 'Operação interrompida');
+  assert.match(await panel.locator('#detail').textContent(), /Nome da loja não reconhecido/);
+  assert.equal(await panel.evaluate(() => document.querySelector('#retry').hidden), false);
+  await editor.locator('#ambiguous').evaluate(el => el.remove());
+  await panel.locator('#retry').click(); await panel.waitForFunction(() => document.querySelector('#status').textContent === 'Editor conectado');
+  await panel.locator('#mode-import').click();
   // Importing a folder never consumes node_modules/config/tools as store files.
   const corrupted = {...entries, '.yampi-sync/baseline/templates/home.twig': strToU8('alterado')};
   await writeFile(path.join(temporary, 'corrupted.zip'), zipSync(corrupted));
@@ -126,13 +139,13 @@ try {
   await mkdir(path.join(repository, '.cache'), {recursive: true});
   await panel.screenshot({path: path.join(repository, '.cache/panel-e2e.png'), fullPage: true});
   await preview.screenshot({path: path.join(repository, '.cache/local-preview-e2e.png'), fullPage: true});
-  console.log('E2E aprovado: extensão MV3 + worker + editor fictício, exportação integral, PNG, projeto portátil com npm ci, Twig/Sass/Vue 2 interativo, ZIP de retorno, envio com backup/reload, histórico, conflito na restauração e importação da pasta inteira. Nenhuma requisição alcançou a Yampi.');
+  console.log('E2E aprovado: painel lateral nativo sem nova aba, exportação automática integral, cabeçalho aninhado, erro de conexão visível e retry, PNG, projeto portátil com npm ci, Twig/Sass/Vue 2, importação de pasta/ZIP com comparação automática, envio com backup/reload, histórico, conflito na restauração e zero publicações. Nenhuma requisição alcançou a Yampi.');
 } catch (error) {
+  if (browser) for (const worker of browser.serviceWorkers()) console.error('Diagnóstico fictício:', JSON.stringify(await worker.evaluate(async () => ({contexts: await chrome.runtime.getContexts({}), sessions: await chrome.storage.session.get(null), tabs: await Promise.all((await chrome.tabs.query({})).map(async t => ({url:t.url, title:await chrome.action.getTitle({tabId:t.id})})))})).catch(() => 'Worker indisponível'),null,2));
   await mkdir(path.join(repository, '.cache'), {recursive: true});
-  if (browser) for (const page of browser.pages()) if (page.url().includes('panel.html?session=')) {
-    await page.screenshot({path: path.join(repository, '.cache/panel-e2e-error.png'), fullPage: true}).catch(() => {});
-    console.error('Estado do painel:', await page.locator('#status').textContent().catch(() => ''), await page.locator('#detail').textContent().catch(() => ''));
-    console.error('Seletor de pasta:', await page.locator('#folder').evaluate(input => ({disabled: input.disabled, count: input.files.length, paths: [...input.files].map(f => f.webkitRelativePath)})).catch(() => ''));
+  if (panel) {
+    await panel.screenshot({path: path.join(repository, '.cache/panel-e2e-error.png'), fullPage: true}).catch(() => {});
+    console.error('Estado do painel:', await panel.locator('#status').textContent().catch(() => ''), await panel.locator('#detail').textContent().catch(() => ''));
   }
   throw error;
 } finally {

@@ -1,6 +1,6 @@
 import type {Command} from './bridge';
-type Session = {tabId: number; editorUrl: string; panelId: number | undefined; locked: boolean};
-const sessions = new Map<string, Session>();
+type Session = {tabId: number; editorUrl: string; documentId?: string; locked: boolean; autoExport: boolean};
+const inFlight = new Map<string, Set<Promise<unknown>>>();
 let sessionQueue = Promise.resolve();
 async function serialize<T>(job: () => Promise<T>): Promise<T> {
   const previous = sessionQueue;
@@ -10,17 +10,42 @@ async function serialize<T>(job: () => Promise<T>): Promise<T> {
   try {return await job();} finally {release();}
 }
 async function getSession(token: string): Promise<Session | undefined> {
-  const live = sessions.get(token);
-  if (live) return live;
-  const stored = await chrome.storage.session.get(token);
-  const value = stored[token] as Session | undefined;
-  if (value) sessions.set(token, value);
-  return value;
+  return (await chrome.storage.session.get(token))[token] as Session | undefined;
 }
 function allowed(url?: string): boolean {
   if (!url) return false;
   const u = new URL(url);
   return u.origin === 'https://app.yampi.com.br' && /^\/store\/code-editor\/?$/.test(u.pathname);
+}
+function panelSender(sender: chrome.runtime.MessageSender): boolean {
+  // Native side-panel messages omit documentId/frameId/tab. A tab or iframe must never impersonate one.
+  if (sender.tab || sender.id !== chrome.runtime.id || !sender.url || sender.frameId !== undefined && sender.frameId !== 0) return false;
+  const url = new URL(sender.url);
+  return url.href.split(/[?#]/)[0] === chrome.runtime.getURL('panel.html') && /^\d+$/.test(url.searchParams.get('tab') || '');
+}
+async function nativeDocument(sender: chrome.runtime.MessageSender): Promise<string> {
+  const contexts = await chrome.runtime.getContexts({contextTypes: ['SIDE_PANEL'], ...(sender.documentId ? {documentIds: [sender.documentId]} : {documentUrls: [sender.url!]})});
+  const matching = contexts.filter(c => c.documentUrl === sender.url && c.frameId === 0 && c.documentId);
+  if (matching.length !== 1) throw new Error('Painel lateral não reconhecido. Abra pelo ícone da extensão.');
+  return matching[0].documentId!;
+}
+async function authenticate(token: string, sender: chrome.runtime.MessageSender): Promise<Session> {
+  if (!panelSender(sender)) throw new Error('Painel não autorizado.');
+  const documentId = await nativeDocument(sender);
+  return serialize(async () => {
+    const session = await getSession(token);
+    if (!session) throw new Error('Sessão expirada. Clique na extensão dentro do editor novamente.');
+    if (new URL(sender.url!).searchParams.get('tab') !== String(session.tabId)) throw new Error('Este painel pertence a outra aba.');
+    if (session.documentId && session.documentId !== documentId) {
+      const live = await chrome.runtime.getContexts({contextTypes: ['SIDE_PANEL'], documentIds: [session.documentId]});
+      if (live.length || session.locked) throw new Error('Outro painel está trabalhando neste editor.');
+    }
+    if (session.documentId !== documentId) {
+      session.documentId = documentId;
+      await chrome.storage.session.set({[token]: session});
+    }
+    return session;
+  });
 }
 async function reloadEditor(tabId: number): Promise<void> {
   await new Promise<void>((resolve, reject) => {
@@ -39,51 +64,99 @@ async function reloadEditor(tabId: number): Promise<void> {
     void chrome.tabs.reload(tabId).catch(error => finish(error instanceof Error ? error : new Error(String(error))));
   });
 }
-chrome.action.onClicked.addListener(async tab => {
-  if (!tab.id || !allowed(tab.url)) {
+export async function openEditorPanel(tab: chrome.tabs.Tab): Promise<void> {
+  if (tab.id === undefined || !allowed(tab.url)) {
     await chrome.action.setBadgeText({text: 'Yampi', tabId: tab.id});
     await chrome.action.setTitle({title: 'Abra o editor de código em app.yampi.com.br e clique novamente.', tabId: tab.id});
     return;
   }
-  const token = crypto.randomUUID();
-  const session: Session = {tabId: tab.id, editorUrl: tab.url!, panelId: undefined, locked: false};
-  const panel = await chrome.tabs.create({url: chrome.runtime.getURL(`panel.html?session=${token}`)});
-  session.panelId = panel.id;
-  sessions.set(token, session);
-  await chrome.storage.session.set({[token]: session});
-  await chrome.action.setBadgeText({text: '', tabId: tab.id});
+  // Use a stable, tab-specific path. Chrome receives both calls in order, before any awaited storage work.
+  // Changing from a global panel to a tab panel after opening leaves the wrong document displayed.
+  const configuring = chrome.sidePanel.setOptions({tabId: tab.id, path: `panel.html?tab=${tab.id}`, enabled: true});
+  const opening = chrome.sidePanel.open({tabId: tab.id});
+  void configuring.catch(() => {}); void opening.catch(() => {});
+  try {
+    const token = await serialize(async () => {
+      const all = await chrome.storage.session.get(null);
+      const sameTab = Object.entries(all).filter(([, value]) => (value as Session).tabId === tab.id);
+      const busy = sameTab.find(([, value]) => (value as Session).locked);
+      if (busy) return busy[0];
+      const previous = sameTab.find(([, value]) => (value as Session).editorUrl === tab.url);
+      if (previous) {await chrome.storage.session.set({[previous[0]]: {...previous[1] as Session, autoExport: true}}); return previous[0];}
+      for (const [key] of sameTab) await chrome.storage.session.remove(key);
+      const key = crypto.randomUUID();
+      await chrome.storage.session.set({[key]: {tabId: tab.id!, editorUrl: tab.url!, locked: false, autoExport: true} satisfies Session});
+      return key;
+    });
+    await configuring; await opening;
+    await chrome.runtime.sendMessage({editorClicked: token}).catch(() => {});
+    await chrome.action.setBadgeText({text: '', tabId: tab.id});
+  } catch (error) {
+    await Promise.allSettled([configuring, opening]);
+    await chrome.action.setBadgeText({text: '!', tabId: tab.id});
+    await chrome.action.setTitle({title: error instanceof Error ? error.message : String(error), tabId: tab.id});
+  }
+}
+chrome.action.onClicked.addListener(openEditorPanel);
+chrome.runtime.onConnect.addListener(port => {
+  const token = port.name.startsWith('panel:') ? port.name.slice(6) : '';
+  if (!token || !port.sender || !panelSender(port.sender)) return;
+  const owner = nativeDocument(port.sender);
+  void owner.catch(() => {});
+  port.onDisconnect.addListener(() => {
+    void (async () => {
+      // A closing panel must not release the editor while an issued write is still running.
+      await Promise.allSettled([...(inFlight.get(token) || [])]);
+      const documentId = await owner;
+      await serialize(async () => {
+        const session = await getSession(token);
+        if (!session || session.documentId !== documentId) return;
+        session.locked = false; delete session.documentId;
+        await chrome.storage.session.set({[token]: session});
+      });
+    })().catch(() => {});
+  });
 });
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (sender.id !== chrome.runtime.id || sender.url?.split(/[?#]/)[0] !== chrome.runtime.getURL('panel.html') || typeof message?.session !== 'string') return false;
-  void (async () => {
-    const session = await getSession(message.session);
-    if (!session || session.panelId !== sender.tab?.id) throw new Error('Sessão expirada. Clique na extensão dentro do editor novamente.');
+  if (!panelSender(sender)) return false;
+  if (message?.action === 'session') {
+    void (async () => {
+      await nativeDocument(sender);
+      return serialize(async () => {
+        const tabId = Number(new URL(sender.url!).searchParams.get('tab'));
+        const entry = Object.entries(await chrome.storage.session.get(null)).find(([, value]) => (value as Session).tabId === tabId);
+        if (!entry) throw new Error('Clique no ícone da extensão dentro do editor para conectar.');
+        return entry[0];
+      });
+    })().then(value => sendResponse({ok: true, value}), error => sendResponse({ok: false, error: error.message}));
+    return true;
+  }
+  if (typeof message?.session !== 'string') return false;
+  const token = message.session as string;
+  const job = (async () => {
+    const session = await authenticate(token, sender);
     const tab = await chrome.tabs.get(session.tabId);
-    if (!allowed(tab.url) || tab.url !== session.editorUrl) throw new Error('A aba de origem mudou. Abra uma nova sessão da extensão.');
-    if (message.action === 'lock') {
-      return serialize(async () => {
-      const all = await chrome.storage.session.get(null);
-      if (!all[message.session]) throw new Error('Sessão encerrada. Abra uma nova sessão da extensão.');
-      if (Object.entries(all).some(([key, value]) => key !== message.session && (value as Session).tabId === session.tabId && (value as Session).locked)) throw new Error('Outra janela da extensão está trabalhando neste editor.');
-      session.locked = true;
-      await chrome.storage.session.set({[message.session]: session});
-      return null;
-      });
-    }
-    if (message.action === 'unlock') {
-      return serialize(async () => {
-      session.locked = false;
-      if ((await chrome.storage.session.get(message.session))[message.session]) await chrome.storage.session.set({[message.session]: session});
-      return null;
-      });
-    }
+    if (!allowed(tab.url) || tab.url !== session.editorUrl) throw new Error('A aba de origem mudou. Clique novamente no ícone dentro do editor correto.');
+    if (['lock', 'unlock', 'auto-export'].includes(message.action)) return serialize(async () => {
+      const current = await getSession(token);
+      if (!current || current.documentId !== session.documentId) throw new Error('Sessão encerrada. Clique na extensão novamente.');
+      if (message.action === 'auto-export') {
+        const claimed = current.autoExport; current.autoExport = false;
+        await chrome.storage.session.set({[token]: current}); return claimed;
+      }
+      if (message.action === 'lock') {
+        const all = await chrome.storage.session.get(null);
+        if (Object.entries(all).some(([key, value]) => key !== token && (value as Session).tabId === current.tabId && (value as Session).locked)) throw new Error('Outro painel está trabalhando neste editor.');
+      }
+      current.locked = message.action === 'lock';
+      await chrome.storage.session.set({[token]: current}); return null;
+    });
     if (!session.locked) throw new Error('Inicie uma operação antes de acessar o editor.');
     if (message.action === 'refresh') {await reloadEditor(session.tabId); return null;}
     const cmd = message.command as Command;
     if (!cmd || !['context', 'inventory', 'read', 'readAsset', 'write'].includes(cmd.op)) throw new Error('Comando não permitido.');
-    // Each command completes within a bounded time; export loops live in the panel, not in the suspendable worker.
     const [existing] = await chrome.scripting.executeScript({target: {tabId: session.tabId}, world: 'MAIN', func: () => {
-      return (window as unknown as {YampiThemeSyncBridge?: {version?: string}}).YampiThemeSyncBridge?.version === '0.2.0';
+      return (window as unknown as {YampiThemeSyncBridge?: {version?: string}}).YampiThemeSyncBridge?.version === '0.2.1';
     }});
     if (!existing?.result) await chrome.scripting.executeScript({target: {tabId: session.tabId}, world: 'MAIN', files: ['bridge.js']});
     const results = await chrome.scripting.executeScript({target: {tabId: session.tabId}, world: 'MAIN', func: async command => {
@@ -94,15 +167,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const reply = results[0]?.result as {ok: boolean; value?: unknown; error?: string} | undefined;
     if (!reply?.ok) throw new Error(reply?.error || 'Sem resposta do editor.');
     return reply.value;
-  })().then(value => sendResponse({ok: true, value}), error => sendResponse({ok: false, error: error instanceof Error ? error.message : String(error)}));
+  })();
+  const pending = inFlight.get(token) || new Set(); pending.add(job); inFlight.set(token, pending);
+  void job.then(value => sendResponse({ok: true, value}), error => sendResponse({ok: false, error: error instanceof Error ? error.message : String(error)})).catch(() => {}).finally(() => {
+    pending.delete(job); if (!pending.size) inFlight.delete(token);
+  });
   return true;
 });
 chrome.tabs.onRemoved.addListener(async id => {
   await serialize(async () => {
-  const stored = await chrome.storage.session.get(null);
-  for (const [token, value] of Object.entries(stored)) {
-    const session = value as Session;
-    if (session.tabId === id || session.panelId === id) {sessions.delete(token); await chrome.storage.session.remove(token);}
-  }
+    const stored = await chrome.storage.session.get(null);
+    for (const [token, value] of Object.entries(stored)) if ((value as Session).tabId === id) await chrome.storage.session.remove(token);
   });
 });

@@ -6,12 +6,15 @@ import {assertContext, MAX_TOTAL_BYTES, MAX_FILE_BYTES, type Assets, type Snapsh
 import {put, get, clearLocal, saveJournal, journalHistory, contextKey} from './storage';
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const isDemo = ['localhost', '127.0.0.1'].includes(location.hostname) && new URLSearchParams(location.search).get('demo') === '1';
-const session = new URLSearchParams(location.search).get('session');
+let session: string | undefined;
+const editorTab = new URLSearchParams(location.search).get('tab');
 let baseline: Snapshot | undefined, local: Files | undefined, plan: Plan | undefined, journal: Journal | undefined;
 let working = false, connected = false, controller: AbortController | undefined;
 let localAssets: Assets = {}, history: Journal[] = [];
 const selected = new Set<string>();
 let rpc: RPC;
+// Keep a document-scoped port so closing the native side panel releases its lock safely.
+let panelPort: chrome.runtime.Port | undefined;
 if (isDemo) {
   $('demo-notice').hidden = false;
   $('fixture').hidden = false;
@@ -38,6 +41,14 @@ if (isDemo) {
   };
 }
 const adapter = new BrowserAdapter(rpc);
+function mode(importing: boolean): void {
+  $('export-section').hidden = importing; $('import-section').hidden = !importing;
+  $('mode-export').setAttribute('aria-pressed', String(!importing)); $('mode-import').setAttribute('aria-pressed', String(importing));
+  $('review').hidden = !importing || !plan; $('send-section').hidden = !importing || !plan || !selected.size;
+  if (!importing) $('diff').hidden = true;
+}
+$('mode-export').addEventListener('click', () => mode(false));
+for (const id of ['mode-import', 'go-import']) $(id).addEventListener('click', () => mode(true));
 if (isDemo) $('demo-local').addEventListener('click', () => {
   if (working || !baseline) {status('Exporte a loja fictícia primeiro.'); return;}
   const sample = {...baseline.files};
@@ -61,7 +72,8 @@ function controls(): void {
   $('export').toggleAttribute('disabled', working || !connected);
   $('compare').toggleAttribute('disabled', working || !connected || !baseline || !local);
   $('apply').toggleAttribute('disabled', working || !connected || !plan || !selected.size || $<HTMLInputElement>('confirm-store').value !== plan.context.storeName);
-  for (const id of ['baseline', 'folder', 'confirm-store', 'clear', 'filter', 'demo-local', 'history', 'download-journal']) $(id).toggleAttribute('disabled', working);
+  for (const id of ['baseline', 'folder', 'confirm-store', 'clear', 'filter', 'demo-local', 'history', 'download-journal', 'retry', 'mode-export', 'mode-import', 'go-import']) $(id).toggleAttribute('disabled', working);
+  $('retry').hidden = connected || !editorTab && !isDemo;
   $('restore').toggleAttribute('disabled', working || !connected || !journal);
   $('download-backup').toggleAttribute('disabled', working || !journal);
   $('download-journal').toggleAttribute('disabled', working || !journal);
@@ -82,8 +94,8 @@ async function run(job: () => Promise<void>, needsEditor = true): Promise<void> 
     working = false; controller = undefined; $('progress').hidden = true; controls();
   }
 }
-function fileName(prefix: string): string {
-  const store = (baseline?.context.storeName || 'tema').normalize('NFKD').replace(/[^\w-]+/g, '-').toLowerCase();
+function fileName(prefix: string, storeName = baseline?.context.storeName || 'tema'): string {
+  const store = storeName.normalize('NFKD').replace(/[^\w-]+/g, '-').toLowerCase();
   return `${prefix}-${store}-${new Date().toISOString().replace(/[:.]/g, '-')}.zip`;
 }
 async function download(bytes: Uint8Array, name: string, type = 'application/zip'): Promise<void> {
@@ -108,12 +120,14 @@ async function download(bytes: Uint8Array, name: string, type = 'application/zip
   } finally {URL.revokeObjectURL(url);}
 }
 function setBaseline(snapshot: Snapshot): void {
-  baseline = snapshot; plan = undefined; selected.clear(); $('review').hidden = true; $('diff').hidden = true;
-  $('baseline-info').textContent = `${Object.keys(snapshot.files).length} textos e ${Object.keys(snapshot.assets || {}).length} imagens · ${snapshot.context.storeName} · ${new Date(snapshot.capturedAt).toLocaleString('pt-BR')}`;
+  baseline = snapshot; plan = undefined; selected.clear(); $('review').hidden = true; $('diff').hidden = true; $('send-section').hidden = true;
+  const images = Object.keys(snapshot.assets || {}).length;
+  $('baseline-info').textContent = `${Object.keys(snapshot.files).length} textos e ${images} ${images === 1 ? 'imagem' : 'imagens'} · ${snapshot.context.storeName} · ${new Date(snapshot.capturedAt).toLocaleString('pt-BR')}`;
 }
 function setLocal(files: Files, assets: Assets = {}): void {
-  local = files; localAssets = assets; plan = undefined; selected.clear(); $('review').hidden = true; $('diff').hidden = true;
-  $('local-info').textContent = `${Object.keys(files).length} textos e ${Object.keys(assets).length} imagens locais carregados.`;
+  local = files; localAssets = assets; plan = undefined; selected.clear(); $('review').hidden = true; $('diff').hidden = true; $('send-section').hidden = true;
+  const images = Object.keys(assets).length;
+  $('local-info').textContent = `${Object.keys(files).length} textos e ${images} ${images === 1 ? 'imagem' : 'imagens'} carregados do computador.`;
 }
 const labels: Record<PlanRow['status'], string> = {
   update: 'Pronto para envio', unchanged: 'Sem alterações', 'remote-only': 'Mudou apenas na loja', 'already-applied': 'Já está na loja', conflict: 'Conflito', 'missing-local': 'Ausente localmente · preservado', 'missing-remote': 'Removido na loja · bloqueado', 'new-local': 'Novo arquivo · bloqueado', unsupported: 'Tipo sem suporte · bloqueado'
@@ -149,6 +163,8 @@ function renderPlan(): void {
     tr.append(td, pathCell, result, action); $('rows').append(tr);
   }
   $('review').hidden = false;
+  $('send-section').hidden = !selected.size;
+  $('target-store').textContent = plan.context.storeName; $('confirm-name').textContent = plan.context.storeName;
 }
 async function compare(): Promise<void> {
   if (!baseline || !local) throw new Error('Carregue a exportação original e a pasta editada.');
@@ -158,7 +174,7 @@ async function compare(): Promise<void> {
   plan = makePlan(baseline, local, remote, localAssets);
   selected.clear(); plan.rows.filter(r => r.status === 'update').forEach(r => selected.add(r.path));
   $<HTMLInputElement>('confirm-store').value = '';
-  renderPlan(); status('Comparação concluída', `${selected.size} arquivos podem ser enviados. Revise as versões e confirme a loja.`);
+  renderPlan(); status('Comparação concluída', selected.size ? `${selected.size} ${selected.size === 1 ? 'arquivo pode ser enviado' : 'arquivos podem ser enviados'}. Revise as versões e confirme a loja.` : 'Nenhuma alteração pode ser enviada. Confira os resultados da comparação abaixo.');
 }
 function journalInfo(): void {
   $('journal-info').textContent = journal ? `${journal.verified.length}/${journal.selected.length} arquivos conferidos · ${journal.status === 'completed' ? 'concluído' : 'envio interrompido ou pendente'} · ${new Date(journal.startedAt).toLocaleString('pt-BR')}` : 'Nenhum envio nesta instalação.';
@@ -174,15 +190,15 @@ async function updateHistory(): Promise<void> {
   }
   picker.value = journal.id;
 }
-$('export').addEventListener('click', () => void run(async () => {
-  status('Relendo o estado atual da loja…');
-  await adapter.refresh();
+async function exportProject(): Promise<void> {
+  status('Extraindo os arquivos da loja…', 'Mantenha o editor aberto. O ZIP será baixado ao concluir a leitura.');
   const snapshot = await capture(adapter, {signal: controller?.signal, progress});
   const bytes = await encodeSnapshot(snapshot, true);
   await put(`baseline:${await contextKey(snapshot.context)}`, snapshot);
-  await download(bytes, fileName('exportacao'));
-  setBaseline(snapshot); status('Projeto local exportado', 'Extraia o ZIP fora deste repositório. Execute npm ci e npm run dev na pasta extraída. Edite tema/ e use npm run pack para gerar o ZIP de retorno.');
-}));
+  await download(bytes, fileName('exportacao', snapshot.context.storeName));
+  setBaseline(snapshot); status('ZIP da loja baixado', 'Extraia o ZIP em uma pasta do computador. Abra “Como editar no computador” abaixo para iniciar a prévia local. Depois de editar, escolha “Enviar alterações”.');
+}
+$('export').addEventListener('click', () => void run(exportProject));
 $('baseline').addEventListener('change', () => void run(async () => {
   const file = $<HTMLInputElement>('baseline').files?.[0]; if (!file) return;
   if (file.size > MAX_TOTAL_BYTES * 2 + MAX_FILE_BYTES) throw new Error('ZIP muito grande.');
@@ -190,7 +206,9 @@ $('baseline').addEventListener('change', () => void run(async () => {
   const project = await decodeProject(new Uint8Array(await file.arrayBuffer()));
   if (connected) assertContext(project.baseline.context, await adapter.context());
   setBaseline(project.baseline); setLocal(project.local, project.localAssets); await put(`baseline:${await contextKey(project.baseline.context)}`, project.baseline);
-  status('Projeto ZIP carregado', 'A origem foi conferida e os arquivos editados já estão carregados. Compare com a loja quando o editor estiver disponível.');
+  mode(true);
+  if (connected) await compare();
+  else status('Projeto ZIP carregado', 'Conecte ao editor para comparar e enviar as alterações.');
 }, connected));
 $('folder').addEventListener('change', () => void run(async () => {
   const files = $<HTMLInputElement>('folder').files; if (!files?.length) return;
@@ -200,7 +218,9 @@ $('folder').addEventListener('change', () => void run(async () => {
     if (connected) assertContext(project.baseline.context, await adapter.context());
     setBaseline(project.baseline); await put(`baseline:${await contextKey(project.baseline.context)}`, project.baseline);
   }
-  setLocal(project.local, project.localAssets); status('Pasta local carregada', 'Clique em Comparar com a loja para detectar alterações e conflitos.');
+  setLocal(project.local, project.localAssets); mode(true);
+  if (connected) await compare();
+  else status('Pasta local carregada', 'Conecte ao editor para comparar e enviar as alterações.');
 }, connected));
 $('compare').addEventListener('click', () => void run(compare));
 $('confirm-store').addEventListener('input', controls);
@@ -211,7 +231,7 @@ $('apply').addEventListener('click', () => void run(async () => {
   if (!plan || $<HTMLInputElement>('confirm-store').value !== plan.context.storeName) throw new Error('Confirme o nome da loja antes de enviar.');
   const current = plan;
   // Freeze selection and invalidate the plan; retries always require another comparison.
-  const chosen = [...selected]; plan = undefined; selected.clear();
+  const chosen = [...selected]; plan = undefined; selected.clear(); $('send-section').hidden = true;
   await applyPlan(adapter, current, chosen, {
     signal: controller?.signal, progress,
     persist: async value => {await saveJournal(value); journal = structuredClone(value); journalInfo(); await updateHistory();},
@@ -234,16 +254,25 @@ $('download-journal').addEventListener('click', () => void run(async () => {
 $('restore').addEventListener('click', () => void run(async () => {
   if (!journal) return;
   setBaseline({context: journal.context, capturedAt: journal.startedAt, files: journal.after});
-  setLocal(journal.before); await compare();
+  setLocal(journal.before); mode(true); await compare();
   status('Restauração preparada para revisão', 'Apenas arquivos ainda iguais ao último envio poderão voltar ao estado anterior. Alterações posteriores ficam como conflitos.');
 }));
 $('clear').addEventListener('click', async () => {
   if (!confirm('Apagar as cópias originais e o último backup guardados nesta extensão? Os ZIPs já baixados continuam no computador. Nenhum arquivo da loja será alterado.')) return;
   await clearLocal(); baseline = undefined; local = undefined; localAssets = {}; plan = undefined; journal = undefined; history = []; $('history').replaceChildren(); selected.clear();
-  $('review').hidden = true; $('diff').hidden = true; $('baseline-info').textContent = 'A exportação ainda não foi carregada.'; $('local-info').textContent = 'Nenhuma pasta selecionada.';
+  $('review').hidden = true; $('diff').hidden = true; $('send-section').hidden = true; $('baseline-info').textContent = 'Nenhuma exportação concluída.'; $('local-info').textContent = 'Nenhum projeto editado selecionado.';
   journalInfo(); status('Dados locais da extensão apagados'); controls();
 });
-await run(async () => {
+async function connect(): Promise<void> {
+  if (!isDemo && !session) {
+    const reply = await chrome.runtime.sendMessage({action: 'session'}).catch(error => ({ok: false, error: error.message}));
+    if (!reply?.ok) {$('store').textContent = 'Editor indisponível'; status('Operação interrompida', reply?.error || 'Não foi possível abrir a sessão.', true); controls(); return;}
+    session = reply.value as string;
+    panelPort = chrome.runtime.connect({name: `panel:${session}`});
+    panelPort.onDisconnect.addListener(() => {connected = false; status('Conexão encerrada', 'Clique no ícone da extensão dentro do editor para abrir novamente.', true); controls();});
+  }
+  await run(async () => {
+  status('Conectando ao editor…');
   const context = await adapter.context(); connected = true;
   $('store').textContent = context.storeName; $('connection-dot').classList.add('connected');
   $<HTMLInputElement>('confirm-store').placeholder = context.storeName;
@@ -252,6 +281,15 @@ await run(async () => {
   history = await journalHistory(context); journal = history[0] || await get<Journal>('journal');
   if (journal) try {assertContext(journal.context, context);} catch {journal = undefined;}
   if (journal && !history.length) {await saveJournal(journal); const backup = await get('lastBackup'); if (backup) await put(`backup:${journal.id}`, backup);}
-  await updateHistory(); journalInfo(); status('Editor conectado', 'Exporte um projeto local ou importe a pasta/ZIP editado. Mantenha a aba do editor aberta durante as operações.');
+  await updateHistory(); journalInfo(); status('Editor conectado', 'Baixe os arquivos da loja ou selecione Enviar alterações para importar o projeto editado.');
+  const auto = !isDemo && await rpc({action: 'auto-export'});
+  if (auto) await exportProject();
+  });
+  if (!connected) $('store').textContent = 'Editor indisponível';
+}
+$('retry').addEventListener('click', () => void connect());
+if (!isDemo && editorTab) chrome.runtime.onMessage.addListener(message => {
+  if (message?.editorClicked === session && !working) void run(async () => {if (await rpc({action: 'auto-export'})) await exportProject();});
 });
-if (!connected) {$('store').textContent = 'Editor indisponível'; status('Importação local disponível', 'Você pode carregar uma pasta ou ZIP. Para exportar, comparar e enviar, abra uma nova sessão no editor Yampi quando estiver disponível.', true);}
+if (isDemo || editorTab) await connect();
+else {status('Abra pelo ícone da extensão', 'No editor de código da Yampi, clique no ícone para conectar e baixar o tema.'); controls();}

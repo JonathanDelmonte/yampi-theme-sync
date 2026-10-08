@@ -2,9 +2,11 @@
 
 Extensão de navegador para exportar os arquivos do tema Yampi como um projeto executável no computador e salvar de volta as alterações escolhidas. Projeto independente, sem vínculo com a Yampi. Código público; arquivos e dados das lojas permanecem locais.
 
-## Estado da versão 0.2
+## Estado da versão 0.2.1
 
 Implementados: exportação dos textos e imagens dos assets com caminhos completos e SHA-256, projeto portátil com ferramentas Twig/Sass/Vue 2, prévia com dados fictícios, importação da pasta inteira ou ZIP de retorno, comparação entre original/local/loja, envio de textos existentes, backup antes do envio, conferência após reload, histórico por loja e restauração protegida contra alterações posteriores. Exportações antigas no formato versão 1 continuam aceitas.
+
+O ícone abre um painel lateral nativo na mesma aba do editor e inicia a extração automaticamente, sem exigir importação. **Baixar arquivos** serve para sair da Yampi; **Enviar alterações** recebe o projeto editado e inicia a comparação. A confirmação do nome da loja aparece somente após a comparação, antes da gravação. Erros de conexão mantêm o motivo original e oferecem nova tentativa. O cabeçalho pode ter elementos aninhados; uma identificação ambígua continua bloqueando o acesso.
 
 O fluxo é testado em um editor fictício com CodeMirror real, testes unitários e teste de integração em Chromium com extensão Manifest V3, worker, downloads e IndexedDB. O teste de integração intercepta toda requisição à origem Yampi e entrega apenas o editor fictício; usa permissão de host adicional somente na cópia temporária de teste. A permissão `activeTab` acionada pelo ícone, a estrutura real do editor e a leitura/gravação no painel Yampi real ainda precisam de validação controlada. Nenhuma gravação na loja de um cliente foi feita para testar esta versão. A plataforma estava indisponível para o proprietário durante este desenvolvimento.
 
@@ -26,7 +28,7 @@ Demonstração: http://127.0.0.1:5181/demo.html?demo=1. O servidor escuta soment
 npm run package
 ```
 
-Produz `releases/yampi-theme-sync-0.2.0.zip` com os arquivos instaláveis e o SHA-256 ao lado. O pacote usa uma lista explícita de arquivos e não inclui a demonstração nem exportações de lojas. A pasta `dist` também permite carregar a extensão sem compactar.
+Produz `releases/yampi-theme-sync-0.2.1.zip` com os arquivos instaláveis e o SHA-256 ao lado. O pacote usa uma lista explícita de arquivos e não inclui a demonstração nem exportações de lojas. A pasta `dist` também permite carregar a extensão sem compactar. O painel lateral requer Chrome/Edge compatível com a API `sidePanel` (Chrome 120 ou posterior); outros navegadores não foram validados.
 
 Para executar o teste do navegador:
 
@@ -41,10 +43,10 @@ O teste instala as dependências de um projeto fictício exportado numa pasta te
 
 1. Carregue a extensão conforme [INSTALACAO.md](docs/INSTALACAO.md).
 2. Abra o editor de código em `https://app.yampi.com.br/store/code-editor/` e clique no ícone da extensão.
-3. Clique em **Exportar projeto local**, preserve o ZIP original e extraia o pacote em uma pasta fora deste repositório. Execute `npm ci` e `npm run dev` nessa pasta. Abra http://127.0.0.1:5182 e edite os arquivos de `tema/`.
-4. Execute `npm run check` para compilar com os dados fictícios e `npm run pack` para gerar `retorno-yampi.zip`. Importe esse ZIP na extensão, ou selecione a pasta inteira do projeto. A pasta `tema` também é aceita quando a exportação original já está carregada. Dependências, ferramentas, dados fictícios e arquivos fora do tema não são enviados. ZIPs compactados com uma pasta externa única são aceitos. A importação local funciona mesmo com o editor indisponível; comparar/enviar exige uma nova sessão conectada.
-5. Clique em **Comparar com a loja**. Revise as versões e os arquivos selecionados. Arquivos que mudaram tanto localmente quanto na loja ficam bloqueados como conflitos.
-6. Confirme o nome da loja e salve os arquivos escolhidos. O backup precisa persistir no navegador e terminar de baixar antes da primeira gravação.
+3. A extração começa automaticamente e o ZIP é baixado ao terminar. Para repetir, use **Baixar ZIP da loja**. Preserve o ZIP original e extraia o pacote em uma pasta fora deste repositório. Execute `npm ci` e `npm run dev` nessa pasta. Abra http://127.0.0.1:5182 e edite os arquivos de `tema/`.
+4. Volte ao editor e escolha **Enviar alterações** no painel lateral. Selecione a pasta inteira do projeto, ou execute `npm run check` e `npm run pack` no computador e selecione `retorno-yampi.zip`. A pasta `tema` também é aceita quando a exportação original já está carregada. Dependências, ferramentas, dados fictícios e arquivos fora do tema não são enviados. ZIPs compactados com uma pasta externa única são aceitos. A importação local funciona mesmo com o editor indisponível; comparar/enviar exige conexão com a aba original.
+5. A comparação começa automaticamente. Revise as versões e os arquivos selecionados. Arquivos que mudaram tanto localmente quanto na loja ficam bloqueados como conflitos. **Comparar novamente com a loja** atualiza a revisão.
+6. Confirme o nome da loja e clique em **Enviar alterações para o editor**. Esse nome confirma o destino, não é um arquivo a importar. O backup precisa persistir no navegador e terminar de baixar antes da primeira gravação.
 7. Confira **Ver prévia** na Yampi. Publique manualmente somente após validar as páginas e funções da loja.
 
 O ZIP original contém `.yampi-sync/manifest.json` e `.yampi-sync/baseline/`. Não altere esses metadados nem a cópia original. A exportação manual anterior, sem esse formato, não é aceita automaticamente: faça a primeira exportação pela extensão antes de sincronizar, mantendo a loja na versão original. O SHA-256 verifica a integridade do pacote, não a legitimidade do remetente de um ZIP recebido de outra pessoa.
@@ -91,7 +93,7 @@ O adaptador depende da estrutura visível do editor Yampi e da API pública do C
 
 - `src/core`: formato de arquivo, geração do projeto portátil, comparação entre três versões e coordenação dos envios.
 - `src/browser`: adaptador do editor e worker Manifest V3. Não usa endpoints privados adivinhados nem credenciais fora do navegador.
-- `src/panel.ts`: painel persistente em uma aba para que exportar não dependa de manter um popup aberto.
+- `src/panel.ts`: painel lateral nativo associado à aba do editor, com progresso, exportação automática e importação separada do retorno.
 - `src/demo`: editor fictício para validar leitura completa, gravação e recarregamento sem uma loja real.
 - `local-runtime`: ferramentas incluídas no projeto exportado para prévia, validação e ZIP de retorno.
 - `tests` e `scripts/e2e.mjs`: comparação, ZIP, imagens, runtime portátil, conflitos, cancelamento, envio parcial, histórico e isolamento de sessões/lojas.
@@ -100,4 +102,4 @@ O adaptador depende da estrutura visível do editor Yampi e da API pública do C
 - [TERCEIROS.md](docs/TERCEIROS.md): avisos de licença dos componentes incluídos no pacote.
 - `docs/ci-example.yml`: exemplo de verificação no GitHub Actions. Não está instalado como workflow; a credencial usada na criação do repositório não possui o escopo `workflow`. Os checks desta entrega foram executados localmente.
 
-Referências: [Editor de código Yampi](https://docs.yampi.com.br/editor-codigo/intro), [regras de arquivos e publicação](https://help.yampi.com.br/pt-BR/articles/13978494-como-acessar-o-editor-de-codigo), [CodeMirror](https://codemirror.net/docs/ref/), [Manifest V3 e scripts](https://developer.chrome.com/docs/extensions/develop/concepts/content-scripts).
+Referências: [Editor de código Yampi](https://docs.yampi.com.br/editor-codigo/intro), [regras de arquivos e publicação](https://help.yampi.com.br/pt-BR/articles/13978494-como-acessar-o-editor-de-codigo), [CodeMirror](https://codemirror.net/docs/ref/), [Manifest V3 e scripts](https://developer.chrome.com/docs/extensions/develop/concepts/content-scripts), [painel lateral do Chrome](https://developer.chrome.com/docs/extensions/reference/api/sidePanel).

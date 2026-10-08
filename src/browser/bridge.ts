@@ -1,7 +1,7 @@
 import {EditorView} from '@codemirror/view';
 import {assertContext, validatePath, validatePaths, validateImage, imagePath, writable, MAX_FILE_BYTES, type Context} from '../core/model';
 export interface Command {op: 'context' | 'inventory' | 'read' | 'readAsset' | 'write'; context?: Context; path?: string; expected?: string; content?: string}
-export const version = '0.2.0';
+export const version = '0.2.1';
 type Reply = {ok: true; value: unknown} | {ok: false; error: string};
 const clean = (e: Element | null) => e?.textContent?.trim() || '';
 function findButton(label: string): HTMLButtonElement {
@@ -10,12 +10,30 @@ function findButton(label: string): HTMLButtonElement {
   return matches[0];
 }
 function getContext(): Context {
-  const header = document.querySelector('header');
-  if (!header || !clean(header).includes('Editor de código')) throw new Error('Abra o editor de código da Yampi.');
-  const marker = [...header.children].find(e => clean(e) === 'Editor de código');
-  const storeName = clean(marker?.nextElementSibling?.nextElementSibling || null);
-  const previews = [...header.querySelectorAll<HTMLAnchorElement>('a[href]')].filter(a => /Ver prévia|Ver loja/i.test(clean(a)));
-  if (!storeName || previews.length !== 1) throw new Error('Não foi possível identificar a loja e a prévia.');
+  const markers = [...document.body.querySelectorAll('*')].filter(e => !e.closest('.cm-editor,script,style') && clean(e) === 'Editor de código' && ![...e.children].some(c => clean(c) === 'Editor de código'));
+  if (markers.length !== 1) throw new Error('Cabeçalho do editor não reconhecido. Abra a tela Editor de código da Yampi.');
+  const marker = markers[0];
+  let header = marker.parentElement;
+  let previews: HTMLAnchorElement[] = [];
+  while (header && header !== document.body) {
+    previews = [...header.querySelectorAll<HTMLAnchorElement>('a[href]')].filter(a => /^(Ver prévia|Ver loja)$/i.test(clean(a)));
+    if (previews.length) break;
+    header = header.parentElement;
+  }
+  if (!header || header === document.body || previews.length !== 1) throw new Error('Link Ver prévia não reconhecido no cabeçalho. A loja não pôde ser identificada com segurança.');
+  const walker = document.createTreeWalker(header, NodeFilter.SHOW_TEXT);
+  const names: string[] = []; let found = false;
+  while (walker.nextNode()) {
+    const parent = walker.currentNode.parentElement;
+    if (parent?.closest('a') === previews[0]) break;
+    if (!parent || parent.closest('script,style,button,input')) continue;
+    const value = walker.currentNode.textContent?.trim();
+    if (!value) continue;
+    if (parent === marker || marker.contains(parent)) {found = true; continue;}
+    if (found) names.push(value);
+  }
+  if (names.length !== 1) throw new Error('Nome da loja não reconhecido entre Editor de código e Ver prévia. Nenhum arquivo foi enviado.');
+  const storeName = names[0];
   const preview = new URL(previews[0].href);
   if (!['https:', 'http:'].includes(preview.protocol)) throw new Error('URL de prévia inválida.');
   return {storeName, previewOrigin: preview.origin, editorOrigin: location.origin};
