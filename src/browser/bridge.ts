@@ -1,38 +1,51 @@
 import {EditorView} from '@codemirror/view';
 import {assertContext, validatePath, validatePaths, validateImage, imagePath, writable, MAX_FILE_BYTES, type Context} from '../core/model';
 export interface Command {op: 'context' | 'inventory' | 'read' | 'readAsset' | 'write'; context?: Context; path?: string; expected?: string; content?: string}
-export const version = '0.2.1';
+export const version = '0.2.2';
 type Reply = {ok: true; value: unknown} | {ok: false; error: string};
 const clean = (e: Element | null) => e?.textContent?.trim() || '';
+type EditorRoot = ShadowRoot | HTMLElement;
+let activeRoot: EditorRoot | undefined;
+function discoverRoot(): EditorRoot {
+  const hosts = document.querySelectorAll<HTMLElement>('yampi-code-editor');
+  if (hosts.length !== 1) throw new Error('Componente do editor Yampi não reconhecido. Abra o editor de código e aguarde o carregamento.');
+  // The real editor is a custom element with an open shadow root. Never search the surrounding app.
+  const root = hosts[0].shadowRoot || hosts[0];
+  if (root.querySelectorAll('aside').length !== 1 || root.querySelectorAll('main').length !== 1 || !root.querySelector('aside .collapse-list > .folder-title')) throw new Error('A estrutura de arquivos do editor ainda não está disponível ou mudou. Tente conectar novamente após o carregamento.');
+  return root;
+}
+function root(): EditorRoot {
+  const current = discoverRoot();
+  if (activeRoot && current !== activeRoot) throw new Error('O componente do editor mudou durante a operação. Operação interrompida.');
+  return current;
+}
 function findButton(label: string): HTMLButtonElement {
-  const matches = [...document.querySelectorAll<HTMLButtonElement>('main button')].filter(b => clean(b) === label);
+  const matches = [...root().querySelectorAll<HTMLButtonElement>('main button')].filter(b => clean(b) === label);
   if (matches.length !== 1) throw new Error(`Controle do editor não reconhecido: ${label}`);
   return matches[0];
 }
 function getContext(): Context {
-  const markers = [...document.body.querySelectorAll('*')].filter(e => !e.closest('.cm-editor,script,style') && clean(e) === 'Editor de código' && ![...e.children].some(c => clean(c) === 'Editor de código'));
-  if (markers.length !== 1) throw new Error('Cabeçalho do editor não reconhecido. Abra a tela Editor de código da Yampi.');
-  const marker = markers[0];
-  let header = marker.parentElement;
-  let previews: HTMLAnchorElement[] = [];
-  while (header && header !== document.body) {
-    previews = [...header.querySelectorAll<HTMLAnchorElement>('a[href]')].filter(a => /^(Ver prévia|Ver loja)$/i.test(clean(a)));
-    if (previews.length) break;
-    header = header.parentElement;
-  }
-  if (!header || header === document.body || previews.length !== 1) throw new Error('Link Ver prévia não reconhecido no cabeçalho. A loja não pôde ser identificada com segurança.');
+  const headers = root().querySelectorAll('header');
+  if (headers.length !== 1) throw new Error('Cabeçalho do componente do editor não reconhecido.');
+  const header = headers[0];
+  const dividers = header.querySelectorAll('.divider');
+  const previews = header.querySelectorAll<HTMLAnchorElement>('a[href][target="_blank"]');
+  if (dividers.length !== 1 || previews.length !== 1) throw new Error('Identificação da loja e link de prévia não reconhecidos no cabeçalho. Nenhum arquivo foi enviado.');
+  const divider = dividers[0];
   const walker = document.createTreeWalker(header, NodeFilter.SHOW_TEXT);
   const names: string[] = []; let found = false;
+  // The store is the only non-control text after the separator and before the preview link.
+  // Editor/preview titles and generated Vue attributes are not identity signals.
   while (walker.nextNode()) {
     const parent = walker.currentNode.parentElement;
     if (parent?.closest('a') === previews[0]) break;
-    if (!parent || parent.closest('script,style,button,input')) continue;
+    if (!parent || parent.closest('script,style,button,input,[hidden],[aria-hidden="true"]')) continue;
+    if (divider.compareDocumentPosition(walker.currentNode) & Node.DOCUMENT_POSITION_FOLLOWING) found = true;
     const value = walker.currentNode.textContent?.trim();
     if (!value) continue;
-    if (parent === marker || marker.contains(parent)) {found = true; continue;}
     if (found) names.push(value);
   }
-  if (names.length !== 1) throw new Error('Nome da loja não reconhecido entre Editor de código e Ver prévia. Nenhum arquivo foi enviado.');
+  if (names.length !== 1) throw new Error('Nome da loja não reconhecido no cabeçalho do editor. Nenhum arquivo foi enviado.');
   const storeName = names[0];
   const preview = new URL(previews[0].href);
   if (!['https:', 'http:'].includes(preview.protocol)) throw new Error('URL de prévia inválida.');
@@ -54,7 +67,7 @@ function pathFor(file: Element): string {
   return path.startsWith('logs/') ? path : validatePath(path);
 }
 function inventory(): Map<string, HTMLElement> {
-  const nodes = [...document.querySelectorAll<HTMLElement>('aside .file-name')].filter(n => !pathFor(n).startsWith('logs/'));
+  const nodes = [...root().querySelectorAll<HTMLElement>('aside .file-name')].filter(n => !pathFor(n).startsWith('logs/'));
   const paths = nodes.map(pathFor);
   validatePaths(paths);
   return new Map(paths.map((path, i) => [path, nodes[i]]));
@@ -63,7 +76,7 @@ async function completeInventory(context: Context): Promise<string[]> {
   let opened = 0;
   for (;;) {
     guard(context); assertClean();
-    const folder = [...document.querySelectorAll<HTMLElement>('aside .collapse-list:not(.active)')].find(node => {
+    const folder = [...root().querySelectorAll<HTMLElement>('aside .collapse-list:not(.active)')].find(node => {
       const title = [...node.children].find(c => c.classList.contains('folder-title'));
       return clean(title || null) !== 'logs';
     });
@@ -76,25 +89,25 @@ async function completeInventory(context: Context): Promise<string[]> {
   let previous = '', stable = 0;
   await until(() => {
     guard(context);
-    if (document.querySelector('aside [aria-busy="true"], aside .loading, aside .spinner')) {stable = 0; return false;}
+    if (root().querySelector('aside [aria-busy="true"], aside .loading, aside .spinner, aside .loader-bg')) {stable = 0; return false;}
     const current = JSON.stringify([...inventory().keys()].sort());
     stable = current === previous ? stable + 1 : 0; previous = current;
     return stable >= 4;
   });
   // A lazy tree can add folders after the initial expansion.
-  if ([...document.querySelectorAll('aside .collapse-list:not(.active)')].some(n => clean([...n.children].find(c => c.classList.contains('folder-title')) || null) !== 'logs')) throw new Error('A árvore adicionou pastas durante a leitura. Exporte novamente.');
+  if ([...root().querySelectorAll('aside .collapse-list:not(.active)')].some(n => clean([...n.children].find(c => c.classList.contains('folder-title')) || null) !== 'logs')) throw new Error('A árvore adicionou pastas durante a leitura. Exporte novamente.');
   return [...inventory().keys()].sort();
 }
 function view(): EditorView {
-  const contents = document.querySelectorAll<HTMLElement>('main .cm-content');
+  const contents = root().querySelectorAll<HTMLElement>('main .cm-content');
   if (contents.length !== 1) throw new Error('Editor CodeMirror não reconhecido; nenhuma operação realizada.');
   const instance = EditorView.findFromDOM(contents[0]);
   if (!instance) throw new Error('Não foi possível ler o documento completo do CodeMirror.');
   return instance;
 }
 function dirty(): boolean {
-  const buttons = [...document.querySelectorAll<HTMLButtonElement>('main button')].filter(b => clean(b) === 'Salvar arquivo');
-  return buttons.some(b => !b.disabled) || !!document.querySelector('main .tab-item .holder-icon circle, main .tab-item .unsaved, main .tab-item.dirty');
+  const buttons = [...root().querySelectorAll<HTMLButtonElement>('main button')].filter(b => clean(b) === 'Salvar arquivo');
+  return buttons.some(b => !b.disabled) || !!root().querySelector('main .tab-item .holder-icon circle, main .tab-item .change-icon, main .tab-item .unsaved, main .tab-item.dirty');
 }
 function assertClean(): void {
   if (dirty()) throw new Error('Existe um arquivo com alterações não salvas. Salve ou descarte manualmente antes de continuar.');
@@ -108,7 +121,7 @@ async function until(check: () => boolean, timeout = 10000): Promise<void> {
   }
 }
 function selectedPath(): string | undefined {
-  const selected = document.querySelectorAll('aside .collapse-item.selected .file-name');
+  const selected = root().querySelectorAll('aside .collapse-item.selected .file-name');
   return selected.length === 1 ? pathFor(selected[0]) : undefined;
 }
 async function open(path: string, context: Context): Promise<void> {
@@ -127,14 +140,14 @@ async function open(path: string, context: Context): Promise<void> {
   item.click();
   await until(() => {
     guard(context);
-    const image = document.querySelector<HTMLImageElement>('main img');
-    return selectedPath() === path && clean(document.querySelector('main .tab-item.active p')) === path.split('/').pop() && (imagePath(path) ? !!image?.complete && !!image.naturalWidth : !!document.querySelector('main .cm-content'));
+    const image = root().querySelector<HTMLImageElement>('main img');
+    return selectedPath() === path && clean(root().querySelector('main .tab-item.active p')) === path.split('/').pop() && (imagePath(path) ? !!image?.complete && !!image.naturalWidth : !!root().querySelector('main .cm-content'));
   });
   // CodeMirror and the active tab can switch before async file loading finishes. Require stable UI/document.
   let last = '', stable = 0;
   await until(() => {
     guard(context);
-    if (selectedPath() !== path || document.querySelector('main [aria-busy="true"], main .loading, main .spinner')) {stable = 0; return false;}
+    if (selectedPath() !== path || root().querySelector('main [aria-busy="true"], main .loading, main .spinner, main .loader-bg')) {stable = 0; return false;}
     const value = imagePath(path) ? visibleImage().src : view().state.doc.toString();
     stable = value === last ? stable + 1 : 0;
     last = value;
@@ -143,7 +156,7 @@ async function open(path: string, context: Context): Promise<void> {
   assertClean();
 }
 function visibleImage(): HTMLImageElement {
-  const images = [...document.querySelectorAll<HTMLImageElement>('main img')];
+  const images = [...root().querySelectorAll<HTMLImageElement>('main img')];
   if (images.length !== 1 || !images[0].complete || !images[0].naturalWidth) throw new Error('Prévia da imagem não reconhecida. Nenhuma exportação parcial será entregue.');
   return images[0];
 }
@@ -178,6 +191,7 @@ export async function command(input: Command): Promise<Reply> {
   if (busy) return {ok: false, error: 'O editor já está executando outra operação da extensão.'};
   busy = true;
   try {
+    activeRoot = discoverRoot();
     const context = getContext();
     if (input.context) guard(input.context);
     assertClean();
@@ -204,11 +218,11 @@ export async function command(input: Command): Promise<Reply> {
     save.click();
     await until(() => {
       guard(context);
-      return save.disabled && !save.querySelector('.loading, .spinner') && !document.querySelector('main [aria-busy="true"]');
+      return save.disabled && !save.querySelector('.loading, .spinner, .button__loader, .button__spinner') && !root().querySelector('main [aria-busy="true"]');
     }, 20000);
     // Do not click publish, delete, rename, or create controls. A separate fresh-page verification follows.
     if (view().state.doc.toString() !== input.content) throw new Error('Conteúdo diferente após salvar.');
     return {ok: true, value: {saved: true}};
   } catch (error) {return {ok: false, error: error instanceof Error ? error.message : String(error)};}
-  finally {busy = false;}
+  finally {busy = false; activeRoot = undefined;}
 }

@@ -2,13 +2,15 @@
 
 Extensão de navegador para exportar os arquivos do tema Yampi como um projeto executável no computador e salvar de volta as alterações escolhidas. Projeto independente, sem vínculo com a Yampi. Código público; arquivos e dados das lojas permanecem locais.
 
-## Estado da versão 0.2.1
+## Estado da versão 0.2.2
 
 Implementados: exportação dos textos e imagens dos assets com caminhos completos e SHA-256, projeto portátil com ferramentas Twig/Sass/Vue 2, prévia com dados fictícios, importação da pasta inteira ou ZIP de retorno, comparação entre original/local/loja, envio de textos existentes, backup antes do envio, conferência após reload, histórico por loja e restauração protegida contra alterações posteriores. Exportações antigas no formato versão 1 continuam aceitas.
 
-O ícone abre um painel lateral nativo na mesma aba do editor e inicia a extração automaticamente, sem exigir importação. **Baixar arquivos** serve para sair da Yampi; **Enviar alterações** recebe o projeto editado e inicia a comparação. A confirmação do nome da loja aparece somente após a comparação, antes da gravação. Erros de conexão mantêm o motivo original e oferecem nova tentativa. O cabeçalho pode ter elementos aninhados; uma identificação ambígua continua bloqueando o acesso.
+O ícone abre um painel lateral nativo na mesma aba do editor e inicia a extração automaticamente, sem exigir importação. **Baixar arquivos** serve para sair da Yampi; **Enviar alterações** recebe o projeto editado e inicia a comparação. A confirmação do nome da loja aparece somente após a comparação, antes da gravação. Erros de conexão mantêm o motivo original e oferecem nova tentativa, que recria a conexão quando necessário. O painel envia uma mensagem periódica ao worker enquanto está aberto; fechar o painel encerra esse mecanismo. Uma gravação interrompida nunca é retomada automaticamente.
 
-O fluxo é testado em um editor fictício com CodeMirror real, testes unitários e teste de integração em Chromium com extensão Manifest V3, worker, downloads e IndexedDB. O teste de integração intercepta toda requisição à origem Yampi e entrega apenas o editor fictício; usa permissão de host adicional somente na cópia temporária de teste. A permissão `activeTab` acionada pelo ícone, a estrutura real do editor e a leitura/gravação no painel Yampi real ainda precisam de validação controlada. Nenhuma gravação na loja de um cliente foi feita para testar esta versão. A plataforma estava indisponível para o proprietário durante este desenvolvimento.
+A identificação combina a URL permitida, um único componente `yampi-code-editor`, sua árvore de arquivos, cabeçalho, nome da loja e origem da prévia. A leitura dos controles fica dentro do Shadow DOM aberto desse componente; elementos do aplicativo ao redor são ignorados. Não depende do texto “Editor de código”, do texto “Ver prévia” nem dos atributos gerados `data-v-*`. O CodeMirror é reconhecido ao abrir cada arquivo de texto, permitindo começar com nenhum arquivo selecionado. Identidade ambígua, estrutura desconhecida, rascunhos pendentes e substituição do componente durante uma operação interrompem o acesso.
+
+O fluxo é testado em um editor fictício com Shadow DOM aberto e CodeMirror real, testes unitários e teste de integração em Chromium com extensão Manifest V3, worker, downloads e IndexedDB. O teste de integração intercepta toda requisição à origem Yampi e entrega apenas o editor fictício; usa permissão de host adicional somente na cópia temporária de teste. A estrutura do componente foi conferida no módulo JavaScript público da Yampi em 08/10/2026; isso não equivale a validar uma exportação em sessão real. A permissão `activeTab` acionada pelo ícone e a leitura/gravação no painel Yampi real ainda precisam de validação controlada. Nenhuma gravação na loja de um cliente foi feita para testar esta versão.
 
 Esta versão não cria, renomeia ou exclui arquivos e pastas, nem publica a loja. Arquivos novos e imagens alteradas aparecem bloqueados na comparação. A exportação de PNG/JPG/JPEG/WebP/SVG dos assets está implementada; o ciclo completo com PNG foi verificado no editor fictício. A leitura depende de uma única prévia da imagem no editor e de download sem credenciais permitido por CORS. Se uma imagem ou texto não puder ser lido integralmente, a exportação falha sem entregar um ZIP parcial como completo. Logs gerados pelo editor são excluídos do inventário do tema. Imagens de catálogo, produtos, preços, configurações visuais e dados de clientes não são exportados. Não há upload de imagens nesta versão.
 
@@ -28,7 +30,7 @@ Demonstração: http://127.0.0.1:5181/demo.html?demo=1. O servidor escuta soment
 npm run package
 ```
 
-Produz `releases/yampi-theme-sync-0.2.1.zip` com os arquivos instaláveis e o SHA-256 ao lado. O pacote usa uma lista explícita de arquivos e não inclui a demonstração nem exportações de lojas. A pasta `dist` também permite carregar a extensão sem compactar. O painel lateral requer Chrome/Edge compatível com a API `sidePanel` (Chrome 120 ou posterior); outros navegadores não foram validados.
+Produz `releases/yampi-theme-sync-0.2.2.zip` com os arquivos instaláveis e o SHA-256 ao lado. O pacote usa uma lista explícita de arquivos e não inclui a demonstração nem exportações de lojas. A pasta `dist` também permite carregar a extensão sem compactar. O painel lateral requer Chrome/Edge compatível com a API `sidePanel` (Chrome 120 ou posterior); outros navegadores não foram validados.
 
 Para executar o teste do navegador:
 
@@ -87,7 +89,7 @@ O adaptador identifica a loja pelo nome no cabeçalho, origem da prévia e orige
 
 ## Limites atuais
 
-O adaptador depende da estrutura visível do editor Yampi e da API pública do CodeMirror para ler o documento completo. Uma mudança de interface pode exigir manutenção. A versão não valida toda a semântica de Twig, Vue ou as regras de negócio da loja; a comparação reduz sobrescritas acidentais, mas não garante que qualquer código local funcione. Limites: 2 MiB por arquivo, 32 MiB de conteúdo do tema, 3.000 arquivos, UTF-8 e caminhos compatíveis com Windows. Finais CRLF de arquivos locais são convertidos para LF, como no editor.
+O adaptador depende da estrutura do componente do editor Yampi e da API pública do CodeMirror para ler o documento completo. Mudanças de títulos são toleradas; alterações no componente, árvore, identificação da loja ou controles podem exigir manutenção. Não há garantia de compatibilidade com qualquer redesign futuro. Um Shadow DOM fechado é recusado quando sua estrutura interna não está acessível. A versão não valida toda a semântica de Twig, Vue ou as regras de negócio da loja; a comparação reduz sobrescritas acidentais, mas não garante que qualquer código local funcione. Limites: 2 MiB por arquivo, 32 MiB de conteúdo do tema, 3.000 arquivos, UTF-8 e caminhos compatíveis com Windows. Finais CRLF de arquivos locais são convertidos para LF, como no editor.
 
 ## Arquitetura e próximos passos
 

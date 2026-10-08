@@ -1,6 +1,7 @@
 import type {Command} from './bridge';
 type Session = {tabId: number; editorUrl: string; documentId?: string; locked: boolean; autoExport: boolean};
 const inFlight = new Map<string, Set<Promise<unknown>>>();
+const ports = new Map<string, Set<Promise<string>>>();
 let sessionQueue = Promise.resolve();
 async function serialize<T>(job: () => Promise<T>): Promise<T> {
   const previous = sessionQueue;
@@ -103,7 +104,9 @@ chrome.runtime.onConnect.addListener(port => {
   if (!token || !port.sender || !panelSender(port.sender)) return;
   const owner = nativeDocument(port.sender);
   void owner.catch(() => {});
+  const owners = ports.get(token) || new Set<Promise<string>>(); owners.add(owner); ports.set(token, owners);
   port.onDisconnect.addListener(() => {
+    owners.delete(owner); if (!owners.size && ports.get(token) === owners) ports.delete(token);
     void (async () => {
       // A closing panel must not release the editor while an issued write is still running.
       await Promise.allSettled([...(inFlight.get(token) || [])]);
@@ -111,6 +114,8 @@ chrome.runtime.onConnect.addListener(port => {
       await serialize(async () => {
         const session = await getSession(token);
         if (!session || session.documentId !== documentId) return;
+        const liveOwners = await Promise.all([...(ports.get(token) || [])].map(p => p.catch(() => undefined)));
+        if (liveOwners.includes(documentId)) return;
         session.locked = false; delete session.documentId;
         await chrome.storage.session.set({[token]: session});
       });
@@ -137,6 +142,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const session = await authenticate(token, sender);
     const tab = await chrome.tabs.get(session.tabId);
     if (!allowed(tab.url) || tab.url !== session.editorUrl) throw new Error('A aba de origem mudou. Clique novamente no ícone dentro do editor correto.');
+    if (message.action === 'heartbeat') return null;
     if (['lock', 'unlock', 'auto-export'].includes(message.action)) return serialize(async () => {
       const current = await getSession(token);
       if (!current || current.documentId !== session.documentId) throw new Error('Sessão encerrada. Clique na extensão novamente.');
@@ -156,7 +162,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const cmd = message.command as Command;
     if (!cmd || !['context', 'inventory', 'read', 'readAsset', 'write'].includes(cmd.op)) throw new Error('Comando não permitido.');
     const [existing] = await chrome.scripting.executeScript({target: {tabId: session.tabId}, world: 'MAIN', func: () => {
-      return (window as unknown as {YampiThemeSyncBridge?: {version?: string}}).YampiThemeSyncBridge?.version === '0.2.1';
+      return (window as unknown as {YampiThemeSyncBridge?: {version?: string}}).YampiThemeSyncBridge?.version === '0.2.2';
     }});
     if (!existing?.result) await chrome.scripting.executeScript({target: {tabId: session.tabId}, world: 'MAIN', files: ['bridge.js']});
     const results = await chrome.scripting.executeScript({target: {tabId: session.tabId}, world: 'MAIN', func: async command => {

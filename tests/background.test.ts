@@ -26,7 +26,7 @@ async function open(tabId = 1) {
 function port(token: string) {
   let disconnect!: () => void;
   connect({name: `panel:${token}`, sender: sender(token), onDisconnect: {addListener: (fn: () => void) => {disconnect = fn;}}} as unknown as chrome.runtime.Port);
-  return () => {contexts.delete(`doc-${token}`); disconnect();};
+  return (removeContext = true) => {if (removeContext) contexts.delete(`doc-${token}`); disconnect();};
 }
 beforeEach(async () => {
   vi.resetModules(); stored = {}; tabs = new Map([[1, {id: 1, url}], [2, {id: 2, url}]]); contexts = new Map(); injected = new Set(); updated = new Set();
@@ -91,6 +91,21 @@ describe('painel lateral, permissões e isolamento do editor', () => {
   });
   test('sem lock não lê e não grava', async () => {
     const token = await open(); expect((await message(token, {command: {op: 'write'}})).ok).toBe(false); expect(chromeMock.scripting.executeScript).not.toHaveBeenCalled();
+  });
+  test('heartbeat exige painel e aba corretos e não injeta nem altera locks', async () => {
+    const token = await open(), other = await open(2);
+    expect((await message(token, {action: 'heartbeat'})).ok).toBe(true); expect(stored[token].locked).toBe(false);
+    await message(token, {action: 'lock'}); await message(token, {action: 'heartbeat'}); expect(stored[token].locked).toBe(true);
+    expect((await message(token, {action: 'heartbeat'}, sender(other))).error).toContain('outra aba');
+    tabs.get(1)!.url = 'https://app.yampi.com.br/store/themes';
+    expect((await message(token, {action: 'heartbeat'})).error).toContain('origem mudou');
+    expect(chromeMock.scripting.executeScript).not.toHaveBeenCalled();
+  });
+  test('desconectar port antigo não libera lock do mesmo documento reconectado', async () => {
+    const token = await open(), closeOld = port(token), closeNew = port(token);
+    await message(token, {action: 'lock'}); closeOld(false);
+    await message(token, {action: 'heartbeat'}); expect(stored[token].locked).toBe(true);
+    closeNew(); await vi.waitFor(() => expect(stored[token].locked).toBe(false));
   });
   test('novo clique durante operação reutiliza a sessão', async () => {
     const token = await open(); await message(token, {action: 'lock'});

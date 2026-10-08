@@ -2,7 +2,13 @@ import {EditorState} from '@codemirror/state';
 import {EditorView} from '@codemirror/view';
 import type {Files} from '../core/model';
 import {demoSnapshot} from './sample';
-const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
+// Fictitious markup only: reproduce the boundary of the real custom element, not its proprietary code.
+const host = document.createElement('yampi-code-editor');
+const root = host.attachShadow({mode: 'open'});
+const style = document.querySelector('style')!.cloneNode(true);
+root.append(style, document.querySelector('header')!, document.querySelector('.layout')!);
+document.body.prepend(host);
+const $ = <T extends HTMLElement = HTMLElement>(id: string) => (root.getElementById(id) || document.getElementById(id)) as T;
 let files: Files = JSON.parse(sessionStorage.getItem('fixture-files') || JSON.stringify(demoSnapshot.files));
 const assetSources = Object.fromEntries(Object.entries(demoSnapshot.assets || {}).map(([p, b]) => [p, 'data:image/png;base64,' + btoa(String.fromCharCode(...b))]));
 let current: string | undefined, editor: EditorView | undefined, generation = 0, publications = Number(sessionStorage.getItem('fixture-publications') || 0);
@@ -21,7 +27,7 @@ save.addEventListener('click', () => {
 function open(path: string, li: HTMLElement) {
   generation++; const id = generation;
   current = path;
-  document.querySelectorAll('li.selected').forEach(e => e.classList.remove('selected')); li.classList.add('selected');
+  root.querySelectorAll('li.selected').forEach(e => e.classList.remove('selected')); li.classList.add('selected');
   $('tab').querySelector('p')!.textContent = path.split('/').pop()!;
   editor?.destroy(); editor = undefined; $('editor').innerHTML = '<div class="loading" aria-busy="true">Carregando arquivo…</div>';
   save.disabled = true;
@@ -32,7 +38,7 @@ function open(path: string, li: HTMLElement) {
     editor = new EditorView({parent: $('editor'), state: EditorState.create({doc: files[path], extensions: [EditorView.updateListener.of(update => {
       if (!update.docChanged) return;
       save.disabled = update.state.doc.toString() === files[path];
-      $('tab').querySelector('.holder-icon')!.innerHTML = save.disabled ? '' : '<svg width="8" height="8"><circle r="3" cx="4" cy="4"></circle></svg>';
+      $('tab').querySelector('.holder-icon')!.innerHTML = save.disabled ? '' : '<div class="change-icon"></div>';
     })]})});
   }, 450);
 }
@@ -59,7 +65,7 @@ for (const path of [...Object.keys(files), ...Object.keys(assetSources)].sort())
 }
 $('external-change').addEventListener('click', () => {
   const path = $<HTMLSelectElement>('remote-file').value; if (assetSources[path]) return; files[path] += '\n<!-- Alteração feita na loja depois da exportação -->\n'; store();
-  if (current === path) open(path, document.querySelector('li.selected')!);
+  if (current === path) open(path, root.querySelector('li.selected')!);
 });
 $('switch-shop').addEventListener('click', () => {$('shop-name').textContent = 'Outra loja de testes';});
 $('reset').addEventListener('click', () => {sessionStorage.removeItem('fixture-files'); location.reload();});

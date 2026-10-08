@@ -1,4 +1,5 @@
 import {BrowserAdapter, type RPC} from './browser/adapter';
+import {PanelConnection} from './browser/panel-connection';
 import {capture, applyPlan} from './core/workflow';
 import {encodeSnapshot, decodeProject, readProjectDirectory} from './core/archive';
 import {makePlan} from './core/planner';
@@ -13,8 +14,7 @@ let working = false, connected = false, controller: AbortController | undefined;
 let localAssets: Assets = {}, history: Journal[] = [];
 const selected = new Set<string>();
 let rpc: RPC;
-// Keep a document-scoped port so closing the native side panel releases its lock safely.
-let panelPort: chrome.runtime.Port | undefined;
+let connection: PanelConnection | undefined;
 if (isDemo) {
   $('demo-notice').hidden = false;
   $('fixture').hidden = false;
@@ -33,12 +33,15 @@ if (isDemo) {
     return reply.value;
   };
 } else {
-  rpc = async request => {
-    if (!session || !chrome.runtime?.id) throw new Error('Abra este painel clicando na extensão dentro do editor Yampi.');
-    const reply = await chrome.runtime.sendMessage({session, ...request});
-    if (!reply?.ok) throw new Error(reply?.error || 'Não foi possível comunicar com a aba do editor.');
-    return reply.value;
-  };
+  connection = new PanelConnection(chrome.runtime, () => {
+    const wasConnected = connected; connected = false;
+    controller?.abort(); $('connection-dot').classList.remove('connected');
+    // Preserve the precise initial diagnostic instead of replacing it with a generic disconnect.
+    if (wasConnected && !working) status('Conexão encerrada', 'Clique em Tentar conectar novamente. Nenhum envio será retomado automaticamente.', true);
+    controls();
+  });
+  rpc = connection.request;
+  window.addEventListener('pagehide', () => connection?.close());
 }
 const adapter = new BrowserAdapter(rpc);
 function mode(importing: boolean): void {
@@ -83,11 +86,11 @@ function controls(): void {
     input.disabled = working || plan?.rows.find(r => r.path === path)?.status !== 'update';
   });
 }
-async function run(job: () => Promise<void>, needsEditor = true): Promise<void> {
+async function run(job: () => Promise<void>, needsEditor = true, prepare?: () => Promise<void>): Promise<void> {
   if (working) return;
   working = true; controller = new AbortController(); controls();
   let locked = false;
-  try {if (needsEditor) {await rpc({action: 'lock'}); locked = true;} await job();}
+  try {await prepare?.(); if (needsEditor) {await rpc({action: 'lock'}); locked = true;} await job();}
   catch (error) {status('Operação interrompida', error instanceof Error ? error.message : String(error), true);}
   finally {
     if (locked) await rpc({action: 'unlock'}).catch(() => {});
@@ -264,13 +267,8 @@ $('clear').addEventListener('click', async () => {
   journalInfo(); status('Dados locais da extensão apagados'); controls();
 });
 async function connect(): Promise<void> {
-  if (!isDemo && !session) {
-    const reply = await chrome.runtime.sendMessage({action: 'session'}).catch(error => ({ok: false, error: error.message}));
-    if (!reply?.ok) {$('store').textContent = 'Editor indisponível'; status('Operação interrompida', reply?.error || 'Não foi possível abrir a sessão.', true); controls(); return;}
-    session = reply.value as string;
-    panelPort = chrome.runtime.connect({name: `panel:${session}`});
-    panelPort.onDisconnect.addListener(() => {connected = false; status('Conexão encerrada', 'Clique no ícone da extensão dentro do editor para abrir novamente.', true); controls();});
-  }
+  if (working) return;
+  connected = false; $('connection-dot').classList.remove('connected');
   await run(async () => {
   status('Conectando ao editor…');
   const context = await adapter.context(); connected = true;
@@ -284,7 +282,7 @@ async function connect(): Promise<void> {
   await updateHistory(); journalInfo(); status('Editor conectado', 'Baixe os arquivos da loja ou selecione Enviar alterações para importar o projeto editado.');
   const auto = !isDemo && await rpc({action: 'auto-export'});
   if (auto) await exportProject();
-  });
+  }, true, async () => {if (connection) {await connection.connect(); session = connection.token;}});
   if (!connected) $('store').textContent = 'Editor indisponível';
 }
 $('retry').addEventListener('click', () => void connect());

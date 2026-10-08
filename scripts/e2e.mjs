@@ -26,7 +26,7 @@ try {
   manifest.host_permissions = ['https://app.yampi.com.br/*'];
   manifest.background.service_worker = 'test-worker.js';
   manifest.web_accessible_resources = [{resources: ['test-launcher.html', 'test-launcher.js'], matches: ['https://app.yampi.com.br/*']}];
-  await writeFile(path.join(extension, 'test-worker.js'), `import {openEditorPanel} from './background.js'; chrome.runtime.onMessage.addListener((message, sender, reply) => {if (message?.testToolbarClick && sender.url === chrome.runtime.getURL('test-launcher.html') && sender.tab) {void openEditorPanel(sender.tab).then(() => reply(true)); return true;}});`);
+  await writeFile(path.join(extension, 'test-worker.js'), `import {openEditorPanel} from './background.js'; const panels = new Set(); globalThis.testDisconnectPanels = () => {for (const port of panels) port.disconnect(); panels.clear();}; chrome.runtime.onConnect.addListener(port => {panels.add(port); port.onDisconnect.addListener(() => panels.delete(port));}); globalThis.testHeartbeats = 0; chrome.runtime.onMessage.addListener((message, sender, reply) => {if (message?.action === 'heartbeat') globalThis.testHeartbeats++; if (message?.testToolbarClick && sender.url === chrome.runtime.getURL('test-launcher.html') && sender.tab) {void openEditorPanel(sender.tab).then(() => reply(true)); return true;}});`);
   await writeFile(path.join(extension, 'test-launcher.html'), '<button id="open">Clique do ícone (teste fictício)</button><script src="test-launcher.js"></script>');
   await writeFile(path.join(extension, 'test-launcher.js'), `document.querySelector('button').onclick = () => chrome.runtime.sendMessage({testToolbarClick:true}); document.body.dataset.ready='true';`);
   await writeFile(path.join(extension, 'manifest.json'), JSON.stringify(manifest));
@@ -47,6 +47,16 @@ try {
   });
   const editor = await browser.newPage(); await editor.goto('https://app.yampi.com.br/store/code-editor/');
   await editor.locator('#test-info').waitFor();
+  await editor.waitForFunction(() => document.querySelector('yampi-code-editor')?.shadowRoot?.querySelector('aside .file-name'));
+  // Surrounding-app text and controls must never be mistaken for the editor, including enabled saves.
+  await editor.evaluate(() => {
+    const decoy = document.createElement('div'); decoy.id = 'surrounding-app';
+    decoy.innerHTML = '<header>Editor de código <span>Outra identificação</span><a target="_blank" href="https://outra-loja.invalid/">Ver prévia</a></header><aside><span class="file-name">decoy.twig</span></aside><main><button>Salvar arquivo</button></main>';
+    document.body.append(decoy);
+    const root = document.querySelector('yampi-code-editor').shadowRoot;
+    root.querySelector('#editor-title').textContent = 'Arquivos do tema';
+    root.querySelector('header a span').textContent = 'Abrir prévia';
+  });
   const downloads = path.join(temporary, 'downloads'); await mkdir(downloads);
   const driver = await nativePanelDriver(browser, downloads);
   const pagesBefore = browser.pages().length;
@@ -69,6 +79,30 @@ try {
   assert.equal(Object.keys(entries).filter(p => p.startsWith('tema/')).length, 9);
   assert.ok(new TextDecoder().decode(entries['tema/templates/long.twig']).includes('Linha 2000'));
   assert.ok(entries['tema/assets/images/example.png'].length > 0);
+  console.log('E2E: Shadow DOM, títulos alterados e controles externos ignorados.');
+  const guards = await editor.evaluate(async () => {
+    const bridge = window.YampiThemeSyncBridge, host = document.querySelector('yampi-code-editor'), root = host.shadowRoot;
+    const initial = await bridge.command({op: 'context'}); if (!initial.ok) throw new Error(initial.error);
+    const duplicate = document.createElement('yampi-code-editor'); document.body.append(duplicate);
+    const multiple = await bridge.command({op: 'context'}); duplicate.remove();
+    const inactive = document.createElement('div'); inactive.className = 'tab-item'; inactive.innerHTML = '<div class="change-icon"></div>'; root.querySelector('main').append(inactive);
+    const dirty = await bridge.command({op: 'context'}); inactive.remove();
+    const switched = bridge.command({op: 'read', path: 'templates/long.twig', context: initial.value});
+    await new Promise(r => setTimeout(r, 100)); root.querySelector('#shop-name').textContent = 'Outra loja fictícia';
+    const changedStore = await switched; root.querySelector('#shop-name').textContent = 'Loja de testes';
+    const replacing = bridge.command({op: 'read', path: 'templates/long.twig', context: initial.value});
+    await new Promise(r => setTimeout(r, 100));
+    const replacement = document.createElement('yampi-code-editor'), replacementRoot = replacement.attachShadow({mode: 'open'});
+    replacementRoot.innerHTML = root.querySelector('header').outerHTML + '<aside><div class="collapse-list"><div class="folder-title">assets</div></div></aside><main></main>';
+    host.replaceWith(replacement); const changedComponent = await replacing; replacement.replaceWith(host);
+    const closed = document.createElement('yampi-code-editor'); closed.attachShadow({mode: 'closed'}); host.replaceWith(closed);
+    const inaccessible = await bridge.command({op: 'context'}); closed.replaceWith(host);
+    return {multiple, dirty, changedStore, changedComponent, inaccessible};
+  });
+  for (const result of Object.values(guards)) assert.equal(result.ok, false);
+  assert.match(guards.dirty.error, /não salvas/); assert.match(guards.changedStore.error, /loja|origem/i);
+  assert.match(guards.changedComponent.error, /componente do editor mudou/); assert.match(guards.inaccessible.error, /estrutura de arquivos/);
+  console.log('E2E: loja/componente trocados, múltiplos editores, rascunho inativo e Shadow DOM fechado bloqueados.');
   for (const [name, bytes] of Object.entries(entries)) {await mkdir(path.dirname(path.join(project, name)), {recursive: true}); await writeFile(path.join(project, name), bytes);}
   const npmCli = process.platform === 'win32' ? path.join(path.dirname(process.execPath), 'node_modules/npm/bin/npm-cli.js') : process.env.npm_execpath;
   assert.ok(npmCli, 'Execute via npm run test:e2e.');
@@ -123,12 +157,22 @@ try {
   assert.match(await panel.locator('#summary').textContent(), /1 conflitos/);
   console.log('E2E: conflito na restauração protegido.');
   // Nested header is accepted; ambiguous identity is rejected without masking the error.
-  await editor.evaluate(() => {const label = document.createElement('span'); label.id = 'ambiguous'; label.textContent = 'Outra identificação'; document.querySelector('#shop-name').after(label);});
+  await editor.evaluate(() => {const label = document.createElement('span'); label.id = 'ambiguous'; label.textContent = 'Outra identificação'; document.querySelector('yampi-code-editor').shadowRoot.querySelector('#shop-name').after(label);});
   await panel.reload(); await panel.waitForFunction(() => document.querySelector('#status').textContent === 'Operação interrompida');
   assert.match(await panel.locator('#detail').textContent(), /Nome da loja não reconhecido/);
   assert.equal(await panel.evaluate(() => document.querySelector('#retry').hidden), false);
+  await worker.evaluate(() => globalThis.testDisconnectPanels());
+  await panel.waitForFunction(() => !document.querySelector('#retry').hidden);
+  assert.equal(await panel.locator('#status').textContent(), 'Operação interrompida');
+  assert.match(await panel.locator('#detail').textContent(), /Nome da loja não reconhecido/);
   await editor.locator('#ambiguous').evaluate(el => el.remove());
   await panel.locator('#retry').click(); await panel.waitForFunction(() => document.querySelector('#status').textContent === 'Editor conectado');
+  await worker.evaluate(() => globalThis.testDisconnectPanels());
+  await panel.waitForFunction(() => document.querySelector('#status').textContent === 'Conexão encerrada');
+  await panel.locator('#retry').click(); await panel.waitForFunction(() => document.querySelector('#status').textContent === 'Editor conectado');
+  assert.equal(await worker.evaluate(async () => Object.values(await chrome.storage.session.get(null))[0].locked), false);
+  assert.ok(await worker.evaluate(() => globalThis.testHeartbeats > 0), 'O painel deve enviar heartbeat real ao worker.');
+  console.log('E2E: desconexão preserva diagnóstico; retry recria port e heartbeat chega ao worker.');
   await panel.locator('#mode-import').click();
   // Importing a folder never consumes node_modules/config/tools as store files.
   const corrupted = {...entries, '.yampi-sync/baseline/templates/home.twig': strToU8('alterado')};
@@ -139,7 +183,7 @@ try {
   await mkdir(path.join(repository, '.cache'), {recursive: true});
   await panel.screenshot({path: path.join(repository, '.cache/panel-e2e.png'), fullPage: true});
   await preview.screenshot({path: path.join(repository, '.cache/local-preview-e2e.png'), fullPage: true});
-  console.log('E2E aprovado: painel lateral nativo sem nova aba, exportação automática integral, cabeçalho aninhado, erro de conexão visível e retry, PNG, projeto portátil com npm ci, Twig/Sass/Vue 2, importação de pasta/ZIP com comparação automática, envio com backup/reload, histórico, conflito na restauração e zero publicações. Nenhuma requisição alcançou a Yampi.');
+  console.log('E2E aprovado: Shadow DOM, títulos alterados, isolamento do componente/loja, painel lateral nativo sem nova aba, exportação automática integral, erro de conexão visível e retry, PNG, projeto portátil com npm ci, Twig/Sass/Vue 2, importação de pasta/ZIP com comparação automática, envio com backup/reload, histórico, conflito na restauração e zero publicações. Nenhuma requisição alcançou a Yampi.');
 } catch (error) {
   if (browser) for (const worker of browser.serviceWorkers()) console.error('Diagnóstico fictício:', JSON.stringify(await worker.evaluate(async () => ({contexts: await chrome.runtime.getContexts({}), sessions: await chrome.storage.session.get(null), tabs: await Promise.all((await chrome.tabs.query({})).map(async t => ({url:t.url, title:await chrome.action.getTitle({tabId:t.id})})))})).catch(() => 'Worker indisponível'),null,2));
   await mkdir(path.join(repository, '.cache'), {recursive: true});
