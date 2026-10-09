@@ -20,13 +20,15 @@ const html = await readFile(path.join(root, 'extension/panel.html'), 'utf8');
 await writeFile(path.join(dist, 'demo.html'), html);
 await cp(path.join(root, 'src/demo/fixture.html'), path.join(dist, 'fixture.html'));
 let notices = '# Componentes de terceiros\n\nLicenças dos componentes incluídos nos arquivos JavaScript da extensão. Ferramentas usadas apenas para desenvolvimento não são distribuídas no pacote.\n';
-for (const name of ['fflate']) {
+for (const name of ['fflate', 'acorn']) {
   const folder = path.join(root, 'node_modules', name);
   const pkg = JSON.parse(await readFile(path.join(folder, 'package.json'), 'utf8'));
   const license = await readFile(path.join(folder, 'LICENSE'), 'utf8');
   notices += `\n## ${name} ${pkg.version}\n\n${license.trim()}\n`;
 }
 await mkdir(path.join(root, 'docs'), {recursive: true});
-await writeFile(path.join(root, 'docs/TERCEIROS.md'), notices);
+const noticesFile=path.join(root,'docs/TERCEIROS.md');
+let existingNotices;try{existingNotices=await readFile(noticesFile,'utf8');}catch(error){if(error.code!=='ENOENT')throw error;}
+if(existingNotices!==notices)await writeFile(noticesFile, notices);
 await writeFile(path.join(dist, 'TERCEIROS.md'), notices);
 console.log('Build pronto: dist/ (extensão) e http://127.0.0.1:5181/demo.html?demo=1 (teste).');

@@ -1,9 +1,10 @@
 import {zipSync, unzipSync, strToU8} from 'fflate';
 import {MAX_FILES, MAX_TOTAL_BYTES, MAX_FILE_BYTES, ROOTS, safeFiles, safeSnapshot, hashBytes, imagePath, validateContext, validatePath, type Snapshot, type Manifest, type Files, type Assets} from './model';
+import {previewEntries, demonstration, type PreviewBundle} from './preview';
 import {localKit} from './local-kit';
 const metaPath = '.yampi-sync/manifest.json';
 export interface Project {baseline: Snapshot; local: Files; localAssets: Assets}
-export async function encodeSnapshot(snapshot: Snapshot, project = false): Promise<Uint8Array> {
+export async function encodeSnapshot(snapshot: Snapshot, project = false, preview?: PreviewBundle): Promise<Uint8Array> {
   const source = safeSnapshot(snapshot);
   const manifest: Manifest = {format: 'yampi-theme-sync', version: 2, context: source.context, capturedAt: source.capturedAt, files: []};
   const entries: Record<string, Uint8Array> = Object.create(null);
@@ -15,7 +16,11 @@ export async function encodeSnapshot(snapshot: Snapshot, project = false): Promi
     manifest.files.push({path, sha256: await hashBytes(bytes), bytes: bytes.length, kind: source.assets?.[path] ? 'image' : 'text'});
   }
   entries[metaPath] = strToU8(JSON.stringify(manifest, null, 2));
-  if (project) for (const [path, value] of Object.entries(localKit(Object.keys(source.files), source.context.storeName))) entries[path] = strToU8(value);
+  if (project) {
+    const visual = preview || demonstration(source.context, 'Contexto visual não capturado; prévia demonstrativa.');
+    for (const [path,value] of Object.entries(localKit(Object.keys(source.files),source.context.storeName,visual))) entries[path]=strToU8(value);
+    Object.assign(entries,await previewEntries(visual));
+  }
   return zipSync(entries, {level: 6});
 }
 function safeArchivePath(path: string): void {
@@ -23,8 +28,9 @@ function safeArchivePath(path: string): void {
 }
 function irrelevant(path: string): boolean {
   const parts = path.split('/');
+  if(path.includes('.yampi-sync/updates/'))return true;
   if (parts.includes('tema') || path.includes('.yampi-sync/baseline/')) return false;
-  return parts.some(p => ['node_modules', '.git', '.cache', 'backups', 'exports'].includes(p));
+  return parts.some(p => ['node_modules', '.git', '.cache', 'backups', 'exports', 'preview'].includes(p));
 }
 function unzipSafe(data: Uint8Array): Record<string, Uint8Array> {
   if (data.length > MAX_TOTAL_BYTES * 2 + MAX_FILE_BYTES) throw new Error('ZIP muito grande.');

@@ -1,6 +1,7 @@
 import type {Adapter, Context} from '../core/model';
+import type {Data} from '../core/preview';
 import type {Command} from './bridge';
-export type RPC = (request: {action?: string; access?: 'read' | 'write'; command?: Command}) => Promise<unknown>;
+export type RPC = (request: {action?: string; access?: 'read' | 'write'; command?: Command; preview?: {url?: string; origins?: string[]; context: Context}}) => Promise<unknown>;
 export class BrowserAdapter implements Adapter {
   private expected?: Context;
   constructor(readonly rpc: RPC) {}
@@ -9,6 +10,7 @@ export class BrowserAdapter implements Adapter {
     this.expected = context;
     return context;
   }
+  async visual(): Promise<Data> {return await this.rpc({command:{op:'visual',context:this.expected}}) as Data;}
   async inventory(): Promise<string[]> {return await this.rpc({command: {op: 'inventory', context: this.expected}}) as string[];}
   async read(path: string): Promise<string> {return await this.rpc({command: {op: 'read', context: this.expected, path}}) as string;}
   async readAsset(path: string): Promise<Uint8Array> {

@@ -1,5 +1,8 @@
 import type {Command} from './bridge';
-type Session = {tabId: number; editorUrl: string; documentId?: string; locked: boolean; access?: 'read' | 'write'};
+import {assertContext, validateContext} from '../core/model';
+import {publicUrl} from '../core/preview';
+import {fetchPublicResource} from './public-fetch';
+type Session = {tabId: number; editorUrl: string; documentId?: string; locked: boolean; access?: 'read' | 'write'; previewOrigins?: string[]};
 const inFlight = new Map<string, Set<Promise<unknown>>>();
 const ports = new Map<string, Set<Promise<string>>>();
 let sessionQueue = Promise.resolve();
@@ -166,16 +169,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         if (Object.entries(all).some(([key, value]) => key !== token && (value as Session).tabId === current.tabId && (value as Session).locked)) throw new Error('Outro painel está trabalhando neste editor.');
       }
       current.locked = message.action === 'lock';
+      delete current.previewOrigins;
       if (current.locked) current.access = message.access || 'read'; else delete current.access;
       await chrome.storage.session.set({[token]: current}); return null;
     });
     if (!session.locked) throw new Error('Inicie uma operação antes de acessar o editor.');
     if (message.action === 'refresh') {await reloadEditor(session.tabId); return null;}
-    const cmd = message.command as Command;
-    if (!cmd || !['context', 'inventory', 'read', 'readAsset', 'write'].includes(cmd.op)) throw new Error('Comando não permitido.');
+    const previewRequest = message.preview as {url?: string; origins?: string[]; context?: unknown} | undefined;
+    const previewAction = ['preview-allow', 'preview-fetch'].includes(message.action);
+    const cmd = previewAction ? {op: 'context' as const, context: validateContext(previewRequest?.context)} : message.command as Command;
+    if (!cmd || !['context', 'inventory', 'read', 'readAsset', 'visual', 'write'].includes(cmd.op)) throw new Error('Comando não permitido.');
+    if (previewAction && session.access !== 'read') throw new Error('Captura visual exige uma operação de leitura.');
     if (cmd.op === 'write' && session.access !== 'write') throw new Error('Esta operação permite apenas copiar. Gravação bloqueada.');
     const [existing] = await chrome.scripting.executeScript({target: {tabId: session.tabId}, world: 'MAIN', func: () => {
-      return (window as unknown as {YampiThemeSyncBridge?: {version?: string}}).YampiThemeSyncBridge?.version === '0.2.4';
+      return (window as unknown as {YampiThemeSyncBridge?: {version?: string}}).YampiThemeSyncBridge?.version === '0.3.0';
     }});
     if (!existing?.result) await chrome.scripting.executeScript({target: {tabId: session.tabId}, world: 'MAIN', files: ['bridge.js']});
     const results = await chrome.scripting.executeScript({target: {tabId: session.tabId}, world: 'MAIN', func: async command => {
@@ -185,6 +192,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }, args: [cmd]});
     const reply = results[0]?.result as {ok: boolean; value?: unknown; error?: string} | undefined;
     if (!reply?.ok) throw new Error(reply?.error || 'Sem resposta do editor.');
+    if (previewAction) {
+      const expected = validateContext(previewRequest?.context); assertContext(expected, validateContext(reply.value));
+      if (message.action === 'preview-allow') {
+        const origins = previewRequest?.origins;
+        if (!Array.isArray(origins) || origins.length > 32 || origins.some(origin => typeof origin !== 'string' || new URL(publicUrl(origin,origin)).origin !== origin)) throw new Error('Origens da prévia inválidas.');
+        for (const origin of origins) if (!await chrome.permissions.contains({origins: [origin + '/*']})) throw new Error('Origem não autorizada no Chrome.');
+        session.previewOrigins = [...new Set([expected.previewOrigin, ...origins])]; await chrome.storage.session.set({[token]:session}); return null;
+      }
+      if (typeof previewRequest?.url !== 'string') throw new Error('URL da prévia ausente.');
+      const origin = new URL(publicUrl(previewRequest.url,expected.previewOrigin)).origin;
+      if (!await chrome.permissions.contains({origins:[origin+'/*']})) throw new Error('Permissão de leitura da vitrine/recurso não concedida.');
+      const result = await fetchPublicResource(previewRequest.url, session.previewOrigins || [expected.previewOrigin]);
+      const [after] = await chrome.scripting.executeScript({target:{tabId:session.tabId},world:'MAIN',func: async context => (window as unknown as {YampiThemeSyncBridge:{command:(input:Command)=>Promise<unknown>}}).YampiThemeSyncBridge.command({op:'context',context}),args:[expected]});
+      const checked=after?.result as {ok:boolean;value:unknown}|undefined;if(!checked?.ok)throw new Error('A loja mudou durante a captura pública.');assertContext(expected,validateContext(checked.value));
+      return result;
+    }
     return reply.value;
   })();
   const pending = inFlight.get(token) || new Set(); pending.add(job); inFlight.set(token, pending);

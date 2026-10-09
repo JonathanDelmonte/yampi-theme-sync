@@ -13,7 +13,7 @@ Exportação de imagens PNG/JPG/JPEG/WebP/SVG implementada, com ciclo completo d
 
 ## Configurações e catálogo
 
-São dados distintos dos arquivos do tema. Planejar exportação de configurações visuais, produtos, variações, preços e imagens de catálogo usando os meios oficialmente disponíveis e as permissões necessárias. A importação desses dados deve considerar IDs, estoque, campos obrigatórios e alterações que afetam a operação da loja. Não tratá-los como simples arquivos de código.
+São dados distintos dos arquivos do tema. A 0.3.0 captura uma amostra visual estática, recursos locais e configurações permitidas, com origem/limites explícitos. Validar essa captura em lojas reais e ampliar formatos declarativos suportados. Exportação completa de catálogo/configurações operacionais e sua importação continuam fora do escopo. A importação desses dados deve considerar IDs, estoque, campos obrigatórios e alterações que afetam a operação da loja. Não tratá-los como simples arquivos de código.
 
 ## Manutenção
 

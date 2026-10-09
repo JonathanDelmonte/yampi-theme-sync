@@ -1,5 +1,5 @@
 import {describe, test, expect, afterEach} from 'vitest';
-import {mkdtemp, mkdir, writeFile, rm, symlink} from 'node:fs/promises';
+import {mkdtemp, mkdir, writeFile, readFile, rm, symlink} from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import http from 'node:http';
@@ -10,6 +10,7 @@ import {readProject, renderPage, validateMarkup, compileStyles, compileComponent
 import {packProject} from '../local-runtime/pack.mjs';
 import {createLocalServer, validateLocal, pageData} from '../local-runtime/dev.mjs';
 import {localKit} from '../src/core/local-kit';
+import {updateProject} from '../scripts/update-project.mjs';
 const folders = [], servers = [];
 afterEach(async () => {
   for (const server of servers.splice(0)) await new Promise(resolve => server.close(resolve));
@@ -26,6 +27,18 @@ async function project() {
   return root;
 }
 describe('ambiente local portátil', () => {
+  test('atualizador preserva edições, configuração, contexto e baseline; dry-run não grava',async()=>{
+    const root=await project(),pkg=JSON.parse(await readFile(path.join(root,'package.json')));pkg.version='0.2.4';pkg.scripts.dev='node meu-servidor.mjs';pkg.scripts.custom='echo personalizado';delete pkg.scripts['check:integrity'];
+    await writeFile(path.join(root,'package.json'),JSON.stringify(pkg,null,2));await writeFile(path.join(root,'tema/templates/home.twig'),'<h1>Trabalho do usuário</h1>');await writeFile(path.join(root,'local.data.json'),'{"meusDados":true}');
+    const protectedPaths=['tema/templates/home.twig','local.data.json','local.config.json','.yampi-sync/manifest.json','.yampi-sync/baseline/templates/home.twig','preview/data.json'];const before=await Promise.all(protectedPaths.map(p=>readFile(path.join(root,p))));
+    const oldPackage=await readFile(path.join(root,'package.json'));const plan=await updateProject(root);expect(plan.apply).toBe(false);expect(await readFile(path.join(root,'package.json'))).toEqual(oldPackage);
+    const applied=await updateProject(root,{apply:true});expect(applied.backup).toContain('.yampi-sync/updates/');const next=JSON.parse(await readFile(path.join(root,'package.json')));expect(next.scripts.dev).toBe(pkg.scripts.dev);expect(next.scripts.custom).toBe(pkg.scripts.custom);expect(next.scripts['check:integrity']).toContain('integrity.mjs');
+    for(let i=0;i<protectedPaths.length;i++)expect(await readFile(path.join(root,protectedPaths[i]))).toEqual(before[i]);expect(await readFile(path.join(root,applied.backup,'before/package.json'))).toEqual(oldPackage);
+  });
+  test('atualizador recusa ferramenta editada, links e original adulterado antes de gravar',async()=>{
+    const root=await project();const oldPackage=await readFile(path.join(root,'package.json'));await writeFile(path.join(root,'.yampi-sync/tools/dev.mjs'),'// Minha ferramenta personalizada\n');await expect(updateProject(root,{apply:true})).rejects.toThrow('modificada pelo usuário');expect(await readFile(path.join(root,'package.json'))).toEqual(oldPackage);
+    const linked=await mkdtemp(path.join(os.tmpdir(),'yampi-ficticio-'));folders.push(linked);await symlink(root,path.join(linked,'junction'),process.platform==='win32'?'junction':'dir');await expect(updateProject(path.join(linked,'junction'),{apply:true})).rejects.toThrow('link');
+  });
   test('monta Twig com includes e filtro de assets sem dependência da Yampi', () => {
     const result = renderPage(demoSnapshot.files, 'templates/home.twig', {section: {params: {title: 'Fictício'}}});
     expect(result).toContain('<h1>Fictício</h1>'); expect(result).toContain('/tema/assets/images/example.png');

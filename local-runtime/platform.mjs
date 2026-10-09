@@ -1,5 +1,5 @@
 // Generic local implementations. These are not proprietary Yampi services.
-export function twigHelpers(localAsset) {
+export function twigHelpers(localAsset, previewAsset = value => String(value || '').startsWith('/preview/assets/') ? value : '/__local/placeholder.svg') {
   const rgb = value => {
     let hex = String(value || '#ffffff').replace(/^#/, '');
     if (hex.length === 3) hex = [...hex].map(c => c + c).join('');
@@ -31,13 +31,13 @@ export function twigHelpers(localAsset) {
       color_is_light: v => luminance(v) > .5,
       is_color_contrasting: (a, b) => contrast(a, b) >= 3,
       get_contrasting_color: (v, foreground, alternative) => foreground ? contrast(v, foreground) >= 3 ? foreground : alternative || '#000000' : contrast(v, '#000000') > contrast(v, '#ffffff') ? '#000000' : '#ffffff',
-      button_bg_color: v => v || '#222222',
-      font_weight: v => ({regular: 400, medium: 500, semibold: 600, bold: 700}[v] || Number(v) || 400),
+      button_bg_color: (style, color) => /^(outline|outlined|contour|contorno)$/i.test(String(style)) ? 'transparent' : color || (/^(#|rgb|hsl|var\()/i.test(String(style)) ? style : '#222222'),
+      font_weight: (family, weight) => ({regular:400,normal:400,medium:500,medio:500,semibold:600,bold:700,negrito:700}[String(weight ?? family).toLowerCase()] || Number(weight ?? family) || 400),
       type_border_radius: radius, type_border_radius_slide: radius, resolve_border_radius_by_type: radius,
       product_discount_tag_radius: radius,
       product_image_margin: () => '0px',
       social_media_fa: v => 'fa-' + String(v || '').replace(/[^a-z-]/gi, ''),
-      thumborize: v => String(v || '').startsWith('/tema/assets/') ? v : '/__local/placeholder.svg',
+      thumborize: v => String(v||'').startsWith('/tema/assets/') ? v : previewAsset(v),
       vuetify: (value, name, key, interpolate) => {
         if (value) return String(String(key || '').split('.').reduce((item, property) => item?.[property], value) ?? '');
         const expression = 'data.' + String(name || 'product') + (key ? '.' + key : '');

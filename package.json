@@ -1,6 +1,6 @@
 {
   "name": "yampi-theme-sync",
-  "version": "0.2.4",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:e2e": "npm run build && node scripts/e2e.mjs",
+    "test:preview": "node scripts/preview-e2e.mjs",
     "check": "npm run typecheck && npm test && npm run build",
     "package": "npm run check && node scripts/package.mjs"
   },
@@ -23,6 +24,7 @@
     "@splidejs/splide": "4.1.4",
     "@types/chrome": "^0.1.0",
     "@types/node": "^24.0.0",
+    "acorn": "8.15.0",
     "esbuild": "^0.28.2",
     "fake-indexeddb": "6.2.5",
     "fflate": "^0.8.3",

@@ -18,11 +18,11 @@ export async function nativePanelDriver(browser, downloadDirectory) {
     const timer = setTimeout(() => reject(new Error('Download não chegou ao driver do teste.')), 60000);
     waiters.push(value => {clearTimeout(timer); resolve(value);});
   });
-  async function attach() {
+  async function attach(tabId) {
     let target;
     const deadline = Date.now() + 30000;
     while (!target && Date.now() < deadline) {
-      target = (await cdp.send('Target.getTargets')).targetInfos.find(t => t.type === 'page' && /\/panel.html\?tab=/.test(t.url));
+      target = (await cdp.send('Target.getTargets')).targetInfos.find(t => t.type === 'page' && /\/panel.html\?tab=/.test(t.url)&&(!tabId||new URL(t.url).searchParams.get('tab')===String(tabId)));
       if (!target) await new Promise(r => setTimeout(r, 100));
     }
     if (!target) throw new Error('Painel lateral nativo não abriu.');
@@ -56,7 +56,7 @@ export async function nativePanelDriver(browser, downloadDirectory) {
       evaluate, waitForFunction, async reload() {await send('Page.reload');},
       async screenshot({path: destination}) {const {data} = await send('Page.captureScreenshot', {captureBeyondViewport: true}); await writeFile(destination, Buffer.from(data, 'base64'));},
       locator(selector) {return {
-        async click() {await evaluate(s => {const el = document.querySelector(s); if (!el || el.disabled || !el.getClientRects().length) throw new Error(`Controle indisponível: ${s}`); el.click();}, selector);},
+        async click() {const point=await evaluate(s => {const el = document.querySelector(s); if (!el || el.disabled || !el.getClientRects().length) throw new Error(`Controle indisponível: ${s}`);el.scrollIntoView({block:'center'});const r=el.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};},selector);await send('Input.dispatchMouseEvent',{type:'mousePressed',...point,button:'left',clickCount:1});await send('Input.dispatchMouseEvent',{type:'mouseReleased',...point,button:'left',clickCount:1});},
         async fill(value) {await evaluate(({s, value}) => {const el = document.querySelector(s); el.value = value; el.dispatchEvent(new Event('input', {bubbles: true}));}, {s: selector, value});},
         async textContent() {return evaluate(s => document.querySelector(s)?.textContent, selector);},
         async setInputFiles(file) {

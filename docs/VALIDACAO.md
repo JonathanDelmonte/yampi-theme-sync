@@ -1,4 +1,63 @@
-# Validação da versão 0.2.4
+# Validação da versão 0.3.0
+
+Execução em 09/10/2026, Windows, Node.js 24.15.0. Fixtures, imagens e fonte usadas nos testes são inteiramente fictícias. Nenhuma escrita real na Yampi foi realizada.
+
+## Diagnóstico do incidente
+
+Os ZIPs anteriores tinham código e baseline internamente consistentes. A comparação por SHA-256 não comprovava completude do inventário remoto ou reprodução visual. O gerador antigo não capturava configurações/seções/catálogo visual, usava dados fictícios, eliminava referências remotas e inseria CSS compilado depois das regras personalizadas. Helpers ignoravam argumentos e a leitura de imagens já em cache podia manter o estado de carregamento. Produtos e categorias de demonstração tinham destinos genéricos.
+
+A correção fica no exportador e no runtime gerado; os arquivos exportados não são alterados para ocultar falhas do simulador. Projetos privados de lojas não foram sobrescritos nesta tarefa. Não foi copiado conteúdo de lojas para este repositório.
+
+## Resultados atuais
+
+- 132 testes unitários passaram, em oito arquivos. Incluem parser estático sem eval/getters, Unicode e JSON/base64, allowlist e segredos, URLs privadas, redirecionamento/streaming/limites, SVG ativo, CSS/imports/fonts, hashes, originais byte a byte, exclusão de preview, helpers, configuração local, updater e permissões/isolamento do worker. Os casos anteriores de preflight, backup, conflito, cancelamento, gravação parcial e restauração permanecem ativos.
+- `npm run test:e2e` passou no painel lateral nativo, com CodeMirror antigo/atual, captura textual/PNG sem mutações, projeto portátil, importação, envio fictício/backup/reload, conflito na restauração e reconexão. A etapa visual também passa pelo painel real, autorização por origem, worker autenticado e captura estática até gerar ZIP com cinco páginas e seis registros de recursos. Respostas públicas são fornecidas exclusivamente pela fixture dentro do perfil temporário.
+- `npm run test:preview` passou para duas lojas fictícias distintas, escura/clara: cinco páginas e seis registros de recursos por loja (quatro SVGs originais, folha de fontes e WOFF2 original). O alias, cores, tipografia, nomes, produtos, categorias e rotas são diferentes.
+- Cada ZIP foi extraído, movido a uma segunda pasta, teve a extração original removida e executou as ferramentas do próprio ZIP com `npm ci`, `check:integrity`, `check` e `pack`. Não usa ferramentas/caches do exportador para executar a prévia. O acesso à vitrine/CDN é bloqueado no navegador local após a instalação.
+- Valores computados de fundo, texto, contorno/preenchimento, peso 700, CSS personalizado e espaçamento de letras foram conferidos. Imagens têm dimensões naturais válidas, classes `-loading` somem, callbacks de imagem em cache completam, fontes e ícone estão carregados, filtros usam preços da amostra e mudança de SKU usa o preço selecionado.
+- Dois destinos de produto e dois de categoria foram abertos por seus links distintos em cada loja e exibiram os títulos/dados correspondentes. Home e os demais templates configurados passaram na compilação; páginas exercitadas não tiveram erros/avisos Vue não tratados ou requisições externas.
+- Quatro comparações visuais: home escura/clara, desktop 1200×900 e mobile 390×844, após fontes/imagens carregarem. Referência independente de Twig/Vue/helpers locais. Mesmo estado, página e viewport. Dimensões iguais e diferença de pixels **0%** nas quatro comparações, com tolerância de canal 8 e limite de aceitação 1%.
+- O retorno contém somente `tema/`, `.yampi-sync/baseline/` e `.yampi-sync/manifest.json`; originais e textos foram comparados byte a byte. Preview, catálogo auxiliar, fontes, ferramentas, relatórios e dependências não entram no retorno.
+
+Evidências reproduzíveis, geradas e ignoradas pelo Git: `.cache/visual-validation/report.json`, `dark-desktop-reference.png`, `dark-desktop-local.png`, equivalentes mobile e light, HTML/CSS/medidas das fixtures e capturas do painel em `.cache/panel-*-e2e.png`. O relatório registra o alcance fictício e `realStoreVisualValidation: false`.
+
+## Arquivos envolvidos
+
+| Área | Arquivos principais |
+|---|---|
+| Formato/captura visual | `src/core/preview.ts`, `src/browser/preview-capture.ts`, `src/browser/public-fetch.ts` |
+| Integração/permissões | `src/browser/background.ts`, `adapter.ts`, `bridge.ts`, `src/panel.ts`, manifesto e HTML do painel |
+| ZIP/gerador | `src/core/archive.ts`, `local-kit.ts` |
+| Prévia portátil | `local-runtime/dev.mjs`, `preview.mjs`, `integrity.mjs`, `engine.mjs`, `platform.mjs`, `platform-browser.mjs`, package/lock |
+| Atualização | `scripts/update-project.mjs`, `runtime-versions.json` |
+| Regressões | `tests/preview.test.ts`, fixtures visuais, testes de worker/runtime, `scripts/preview-e2e.mjs`, `e2e.mjs`, driver do painel |
+| Distribuição/documentação | build, package/lock raiz, README, instalação, validação, roadmap e licenças |
+
+## Reproduzir
+
+```powershell
+npm ci
+npm run check
+npm run test:e2e
+npm run test:preview
+npm run package
+```
+
+Os testes de navegador usam Chromium instalado pelo Playwright. Portas de teste são efêmeras, sem interromper um servidor de projeto já aberto. O pacote distribuído usa allowlist e não contém a fixture, driver, mock do worker ou exports. Acorn e fflate têm licença incluída.
+
+## Nova exportação e projetos existentes
+
+Recarregue a extensão 0.3.0 na mesma pasta instalada, feche o painel antigo e recarregue o editor sem rascunhos pendentes. Confira a loja e confirme a cópia com captura visual habilitada. Autorize somente as origens apresentadas; se negar, a extensão indica a prévia parcial/demonstrativa. Extraia em uma pasta nova e execute os quatro comandos de integridade, compilação, prévia e retorno descritos no README.
+
+Para trocar apenas ferramentas antigas, use `node scripts/update-project.mjs "C:/projeto"` e depois `--apply`. Dry-run não escreve. Ferramentas modificadas pelo usuário e dependências diferentes são recusadas antes da gravação; scripts personalizados, dados, configuração, tema, baseline e manifesto são preservados. Backup/journal precedem a atualização, com rechecagem contra edições concorrentes. Uma atualização não inventa contexto ausente: uma nova captura separada é necessária para isso.
+
+## Limitações e validação real
+
+Configuração declarativa do editor é priorizada quando disponível. Complementos publicados podem diferir do rascunho; o vínculo independente ao tema exato não foi comprovado. A captura visual é uma amostra limitada, não um backup de catálogo/configurações operacionais. JSON dinâmico, recursos recusados, limites e falhas constam no diagnóstico. CSS importado em ciclo é recusado explicitamente, preservando as outras regras. Unknown modules e capacidades sem backend têm erro/limitação visível.
+
+Os testes sintéticos acima validam a implementação nos cenários descritos. Não certificam fidelidade de uma loja real, todo componente, plugin ou regra de negócio. Inventário remoto independente, redes lentas reais, imagens/formatos reais, nova exportação visual real e gravação/restauração real ainda precisam de validação específica. Não se deve classificar uma exportação real como visualmente validada com base em HTTP 200, compilação ou hashes internos.
+
+## Histórico da versão 0.2.4
 
 Execução local em 08/10/2026, Node.js 24.15.0, Windows. Os testes usam somente dados fictícios.
 

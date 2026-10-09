@@ -1,13 +1,17 @@
+import {preparePreview, finishPreview, type PreviewDraft, type PreviewFetch} from './browser/preview-capture';
+import {demonstration, publicUrl, type PreviewBundle} from './core/preview';
 import {BrowserAdapter, type RPC} from './browser/adapter';
 import {PanelConnection} from './browser/panel-connection';
 import {capture, applyPlan} from './core/workflow';
 import {encodeSnapshot, decodeProject, readProjectDirectory} from './core/archive';
 import {makePlan} from './core/planner';
-import {assertContext, MAX_TOTAL_BYTES, MAX_FILE_BYTES, type Assets, type Snapshot, type Files, type Plan, type PlanRow, type Journal, type Progress} from './core/model';
+import {assertContext, MAX_TOTAL_BYTES, MAX_FILE_BYTES, type Context, type Assets, type Snapshot, type Files, type Plan, type PlanRow, type Journal, type Progress} from './core/model';
 import {put, get, clearLocal, saveJournal, journalHistory, contextKey} from './storage';
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const isDemo = ['localhost', '127.0.0.1'].includes(location.hostname) && new URLSearchParams(location.search).get('demo') === '1';
 let session: string | undefined;
+let currentContext: Context | undefined;
+let pendingPreview: {snapshot:Snapshot;draft:PreviewDraft;bundle:PreviewBundle;origins:string[]} | undefined;
 const editorTab = new URLSearchParams(location.search).get('tab');
 let baseline: Snapshot | undefined, local: Files | undefined, plan: Plan | undefined, journal: Journal | undefined;
 let working = false, connected = false, controller: AbortController | undefined;
@@ -72,7 +76,10 @@ function progress(p: Progress): void {
   status(`${p.phase} · ${p.done}/${p.total}`, p.path);
 }
 function controls(): void {
-  $('export').toggleAttribute('disabled', working || !connected);
+  $('export').toggleAttribute('disabled', working || !connected || !!pendingPreview);
+  $('include-preview').toggleAttribute('disabled',working);
+  $('preview-pending').hidden=!pendingPreview;
+  for(const id of ['preview-allow','preview-partial','preview-discard'])$(id).toggleAttribute('disabled',working||!pendingPreview);
   $('compare').toggleAttribute('disabled', working || !connected || !baseline || !local);
   $('apply').toggleAttribute('disabled', working || !connected || !plan || !selected.size || $<HTMLInputElement>('confirm-store').value !== plan.context.storeName);
   for (const id of ['baseline', 'folder', 'confirm-store', 'clear', 'filter', 'demo-local', 'history', 'download-journal', 'retry', 'mode-export', 'mode-import', 'go-import']) $(id).toggleAttribute('disabled', working);
@@ -193,15 +200,58 @@ async function updateHistory(): Promise<void> {
   }
   picker.value = journal.id;
 }
-async function exportProject(): Promise<void> {
-  status('Extraindo os arquivos da loja…', 'Mantenha o editor aberto. O ZIP será baixado ao concluir a leitura.');
-  const snapshot = await capture(adapter, {signal: controller?.signal, progress});
-  const bytes = await encodeSnapshot(snapshot, true);
-  await put(`baseline:${await contextKey(snapshot.context)}`, snapshot);
-  await download(bytes, fileName('exportacao', snapshot.context.storeName));
-  setBaseline(snapshot); status('ZIP da loja baixado', 'Extraia o ZIP em uma pasta do computador. Abra “Como editar no computador” abaixo para iniciar a prévia local. Depois de editar, escolha “Enviar alterações”.');
+function requestScopes(origins:string[]):Promise<boolean> {
+  if(isDemo)return Promise.resolve(false);
+  return chrome.permissions.request({origins:origins.map(origin=>publicUrl(origin,origin).replace(/\/$/,'')+'/*')}).catch(()=>false);
 }
-$('export').addEventListener('click', () => void run(exportProject));
+function remoteFetch(snapshot:Snapshot):PreviewFetch {
+  return async url=>{if(controller?.signal.aborted)throw new Error('Cancelado.');assertContext(snapshot.context,await adapter.context());
+    const reply=await rpc({action:'preview-fetch',preview:{url,context:snapshot.context}}) as {encoded:string;type:string;url:string};
+    return {bytes:Uint8Array.from(atob(reply.encoded),c=>c.charCodeAt(0)),type:reply.type,url:reply.url};};
+}
+async function deliverProject(snapshot:Snapshot,visual:PreviewBundle):Promise<void> {
+  assertContext(snapshot.context,await adapter.context());
+  const bytes=await encodeSnapshot(snapshot,true,visual);
+  await put(`baseline:${await contextKey(snapshot.context)}`,snapshot);
+  await download(bytes,fileName('exportacao',snapshot.context.storeName));
+  setBaseline(snapshot);pendingPreview=undefined;
+  const source=visual.source.kind==='demonstration'?'demonstrativa':'parcial — '+(visual.source.kind==='editor'?'dados do editor':'vitrine publicada, rascunho não vinculado');
+  $('preview-info').textContent=`Prévia ${source}. ${Object.keys(visual.assets).length} recursos locais; ${visual.pages.length} páginas capturadas; ${visual.issues.length} observações. Relatório: preview/report.json. Fidelidade visual não validada automaticamente.`;
+  status('ZIP da loja baixado','Código preservado. '+$('preview-info').textContent);
+}
+async function completeVisual(snapshot:Snapshot,draft:PreviewDraft,origins:string[]):Promise<void> {
+  await rpc({action:'preview-allow',preview:{origins,context:snapshot.context}});
+  const bundle=await finishPreview(draft,remoteFetch(snapshot),origins,controller?.signal);
+  const missing=[...new Set(bundle.issues.filter(i=>i.code==='asset-unavailable'&&i.reason==='Origem não autorizada para leitura.'&&i.resource).map(i=>new URL(i.resource!).origin))];
+  if(missing.length) {
+    pendingPreview={snapshot,draft,bundle,origins};
+    draft.urls=[...new Set([...draft.urls,...bundle.issues.filter(i=>i.code==='asset-unavailable'&&i.resource).map(i=>i.resource!)])];
+    $('preview-origins').textContent=missing.join(', ');
+    status('Código copiado; recursos visuais aguardam autorização','Autorize somente as origens listadas para incluir imagens/fontes no ZIP, ou baixe uma prévia parcial. Nenhum arquivo da Yampi foi alterado.');
+  } else await deliverProject(snapshot,bundle);
+}
+async function exportProject(permission:Promise<boolean>):Promise<void> {
+  if(!connected)throw new Error('Abra o editor de código Yampi e clique no ícone da extensão.');
+  const snapshot=await capture(adapter,{signal:controller?.signal,progress});
+  const enabled=await permission;
+  if(!enabled){await deliverProject(snapshot,demonstration(snapshot.context,'Captura visual não autorizada ou desativada. Código exportado; configurações, catálogo de amostra, imagens e fontes visuais não foram capturados.'));return;}
+  status('Capturando contexto visual público…','Somente leituras, sem scripts da vitrine. A publicação pode diferir do rascunho.');
+  const editorData=await adapter.visual();
+  const draft=await preparePreview(snapshot,remoteFetch(snapshot),{editorData,enabled:true,signal:controller?.signal});
+  await completeVisual(snapshot,draft,[snapshot.context.previewOrigin]);
+}
+$('export').addEventListener('click',()=>{const permission=$<HTMLInputElement>('include-preview').checked&&currentContext?requestScopes([currentContext.previewOrigin]):Promise.resolve(false);void run(()=>exportProject(permission));});
+$('preview-allow').addEventListener('click',()=>{const pending=pendingPreview;if(!pending)return;
+  const missing=[...new Set(pending.bundle.issues.filter(i=>i.code==='asset-unavailable'&&i.reason==='Origem não autorizada para leitura.'&&i.resource).map(i=>new URL(i.resource!).origin))];
+  const permission=requestScopes(missing);
+  void run(async()=>{if(!await permission){status('Permissão não concedida','Você pode baixar com a prévia parcial.');return;}
+    const origins=[...new Set([...pending.origins,...missing])];
+    pending.draft.bundle.issues=pending.draft.bundle.issues.filter(i=>i.code!=='asset-unavailable');
+    pending.draft.bundle.assets={};pending.draft.bundle.resources=[];pending.draft.bundle.styles=[];
+    await completeVisual(pending.snapshot,pending.draft,origins);});
+});
+$('preview-partial').addEventListener('click',()=>{const pending=pendingPreview;if(pending)void run(()=>deliverProject(pending.snapshot,pending.bundle));});
+$('preview-discard').addEventListener('click',()=>{pendingPreview=undefined;controls();status('Preparação visual descartada','Nenhum arquivo da Yampi foi alterado.');});
 $('baseline').addEventListener('change', () => void run(async () => {
   const file = $<HTMLInputElement>('baseline').files?.[0]; if (!file) return;
   if (file.size > MAX_TOTAL_BYTES * 2 + MAX_FILE_BYTES) throw new Error('ZIP muito grande.');
@@ -271,7 +321,7 @@ async function connect(): Promise<void> {
   connected = false; $('connection-dot').classList.remove('connected');
   await run(async () => {
   status('Conectando ao editor…');
-  const context = await adapter.context(); connected = true;
+  const context = await adapter.context(); currentContext=context; connected = true;
   $('store').textContent = context.storeName; $('connection-dot').classList.add('connected');
   $<HTMLInputElement>('confirm-store').placeholder = context.storeName;
   const previous = await get<Snapshot>(`baseline:${await contextKey(context)}`) || await get<Snapshot>('baseline');

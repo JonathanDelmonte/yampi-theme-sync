@@ -93,7 +93,7 @@ export function renderPage(files, template, data, config = {}) {
   templates['yampi-internals/head.twig'] ??= '<!-- Serviços internos ausentes na prévia local -->';
   templates['yampi-internals/services/chat.twig'] ??= '<!-- Chat não é executado na prévia local -->';
   const twig = createSynchronousEnvironment(createSynchronousArrayLoader(templates), {autoEscapingStrategy: 'html'});
-  const {filters, functions} = twigHelpers(localAsset);
+  const {filters, functions}=twigHelpers(localAsset,value=>{const src=String(value||'');if(src.startsWith('/preview/assets/'))return src;const map=data.__preview?.assetMap||{};try{return map[src]||map[new URL(src,map.__origin).href]||'/__local/placeholder.svg';}catch{return '/__local/placeholder.svg';}});
   function register(kind, name, fn) {
     const args = Array.from({length: fn.length}, (_, i) => ({name: 'arg' + i, defaultValue: null}));
     const wrapper = (context, ...values) => fn(...values);

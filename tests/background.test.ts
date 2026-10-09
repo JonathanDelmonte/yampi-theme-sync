@@ -1,5 +1,5 @@
 import {beforeEach, afterEach, describe, test, expect, vi} from 'vitest';
-type Session = {tabId: number; editorUrl: string; documentId?: string; locked: boolean; access?: 'read' | 'write'};
+type Session = {tabId: number; editorUrl: string; documentId?: string; locked: boolean; access?: 'read' | 'write'; previewOrigins?:string[]};
 let stored: Record<string, Session>, tabs: Map<number, {id: number; url: string}>, contexts: Map<string, chrome.runtime.ExtensionContext>, injected: Set<number>;
 let chromeMock: typeof chrome, clicked: (tab: chrome.tabs.Tab) => Promise<void>, removed: (id: number) => Promise<void>;
 let listener: (message: unknown, sender: chrome.runtime.MessageSender, response: (r: unknown) => void) => boolean;
@@ -36,6 +36,7 @@ beforeEach(async () => {
       getContexts: vi.fn(async (filter: {documentIds?: string[]; contextTypes?: string[]; documentUrls?: string[]}) => [...contexts.values()].filter(c => (!filter.documentIds || filter.documentIds.includes(c.documentId!)) && (!filter.documentUrls || filter.documentUrls.includes(c.documentUrl!)) && (!filter.contextTypes || filter.contextTypes.includes(c.contextType)))),
       onMessage: {addListener: vi.fn(fn => {listener = fn;})}, onConnect: {addListener: vi.fn(fn => {connect = fn;})}},
     action: {onClicked: {addListener: vi.fn(fn => {clicked = fn;})}, setBadgeText: vi.fn(async () => {}), setTitle: vi.fn(async () => {})},
+    permissions:{contains:vi.fn(async()=>true)},
     sidePanel: {open: vi.fn(async () => {}), setOptions: vi.fn(async () => {}), onClosed: {addListener: vi.fn(fn => {panelClosed = fn;})}},
     storage: {session: {
       get: vi.fn(async (key: string | null) => structuredClone(key === null ? stored : {[key]: stored[key]})),
@@ -53,6 +54,24 @@ beforeEach(async () => {
 });
 afterEach(() => {vi.unstubAllGlobals();});
 describe('painel lateral, permissões e isolamento do editor', () => {
+  test('captura pública usa autorização por sessão e leitura; expira ao desbloquear',async()=>{
+    const token=await open(),ctx={storeName:'Fictícia A',previewOrigin:'https://store-a.invalid',editorOrigin:'https://app.yampi.com.br'};
+    vi.mocked(chromeMock.scripting.executeScript).mockImplementation(async request=>'args' in request&&request.args?[{result:{ok:true,value:ctx}}]:[{result:true}]);
+    const fetcher=vi.fn(async()=>new Response('<svg/>',{headers:{'content-type':'image/svg+xml'}}));vi.stubGlobal('fetch',fetcher);
+    await message(token,{action:'lock',access:'write'});expect((await message(token,{action:'preview-fetch',preview:{url:'https://store-a.invalid/a.svg',context:ctx}})).error).toContain('leitura');expect(fetcher).not.toHaveBeenCalled();
+    await message(token,{action:'unlock'});await message(token,{action:'lock',access:'read'});
+    expect((await message(token,{action:'preview-allow',preview:{origins:['https://cdn-a.invalid'],context:ctx}})).ok).toBe(true);
+    expect((await message(token,{action:'preview-fetch',preview:{url:'https://cdn-a.invalid/a.svg',context:ctx}})).ok).toBe(true);expect(fetcher).toHaveBeenCalledWith('https://cdn-a.invalid/a.svg',expect.objectContaining({credentials:'omit',redirect:'error'}));
+    expect((await message(token,{action:'preview-fetch',preview:{url:'https://cdn-b.invalid/a.svg',context:ctx}})).ok).toBe(false);expect(fetcher).toHaveBeenCalledTimes(1);
+    await message(token,{action:'unlock'});expect(stored[token].previewOrigins).toBeUndefined();await message(token,{action:'lock',access:'read'});expect((await message(token,{action:'preview-fetch',preview:{url:'https://cdn-a.invalid/a.svg',context:ctx}})).ok).toBe(false);
+  });
+  test('captura pública rejeita permissão ausente e mudança de loja durante o GET',async()=>{
+    const token=await open(),ctx={storeName:'Fictícia A',previewOrigin:'https://store-a.invalid',editorOrigin:'https://app.yampi.com.br'};let current=ctx;
+    vi.mocked(chromeMock.scripting.executeScript).mockImplementation(async request=>'args' in request&&request.args?[{result:{ok:true,value:current}}]:[{result:true}]);
+    const fetcher=vi.fn(async()=>{current={...ctx,storeName:'Fictícia B'};return new Response('<svg/>',{headers:{'content-type':'image/svg+xml'}});});vi.stubGlobal('fetch',fetcher);await message(token,{action:'lock',access:'read'});
+    vi.mocked(chromeMock.permissions.contains).mockImplementationOnce(async()=>false);expect((await message(token,{action:'preview-fetch',preview:{url:'https://store-a.invalid/a.svg',context:ctx}})).error).toContain('concedida');expect(fetcher).not.toHaveBeenCalled();
+    expect((await message(token,{action:'preview-fetch',preview:{url:'https://store-a.invalid/a.svg',context:ctx}})).ok).toBe(false);expect(fetcher).toHaveBeenCalledTimes(1);
+  });
   test('painel global desativado: trocar de aba nunca habilita outro painel', async () => {
     expect(chromeMock.sidePanel.setOptions).toHaveBeenCalledWith({enabled: false});
     await open(1);

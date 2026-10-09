@@ -7,9 +7,11 @@ import {spawn} from 'node:child_process';
 import {unzipSync, zipSync, strToU8} from 'fflate';
 import {createLocalServer} from '../local-runtime/dev.mjs';
 import {nativePanelDriver} from './side-panel-test.mjs';
+import {build} from 'esbuild';
+import {pathToFileURL} from 'node:url';
 const repository = path.resolve(import.meta.dirname, '..');
 const temporary = await mkdtemp(path.join(os.tmpdir(), 'yampi-e2e-ficticio-'));
-let browser, localServer, panel;
+let browser, localServer, panel,localOrigin;
 async function command(cmd, args, cwd) {
   await new Promise((resolve, reject) => {
     const child = spawn(cmd, args, {cwd, stdio: 'pipe'}); let log = '';
@@ -23,7 +25,7 @@ try {
   for (const file of ['manifest.json', 'background.js', 'bridge.js', 'panel.js', 'panel.html', 'panel.css']) await cp(path.join(repository, 'dist', file), path.join(extension, file));
   const manifest = JSON.parse(await readFile(path.join(extension, 'manifest.json'), 'utf8'));
   // Test-only permission. Every HTTP request to this origin is fulfilled below by the fixture; nothing reaches Yampi.
-  manifest.host_permissions = ['https://app.yampi.com.br/*'];
+  manifest.host_permissions = ['https://app.yampi.com.br/*','https://loja-exemplo.invalid/*','https://dark-cdn.invalid/*'];
   manifest.background.service_worker = 'test-worker.js';
   manifest.web_accessible_resources = [{resources: ['test-launcher.html', 'test-launcher.js'], matches: ['https://app.yampi.com.br/*']}];
   await writeFile(path.join(extension, 'test-worker.js'), `import {openEditorPanel} from './background.js'; const panels = new Set(); globalThis.testDisconnectPanels = () => {for (const port of panels) port.disconnect(); panels.clear();}; chrome.runtime.onConnect.addListener(port => {panels.add(port); port.onDisconnect.addListener(() => panels.delete(port));}); globalThis.testHeartbeats = 0; globalThis.testRequests = []; chrome.runtime.onMessage.addListener((message, sender, reply) => {if (message?.action === 'heartbeat') globalThis.testHeartbeats++; if (message?.command || message?.action === 'lock') globalThis.testRequests.push(message.command?.op || 'lock:' + message.access); if (message?.testToolbarClick && sender.url === chrome.runtime.getURL('test-launcher.html') && sender.tab) {void openEditorPanel(sender.tab).then(() => reply(true)); return true;}});`);
@@ -43,7 +45,7 @@ try {
     if (url.protocol === 'chrome-extension:') return route.continue();
     if (url.origin === 'https://app.yampi.com.br' && /^\/store\/code-editor\/?$/.test(url.pathname)) return route.fulfill({contentType: 'text/html', body: html});
     if (url.origin === 'https://app.yampi.com.br' && ['/store/code-editor/fixture.js', '/store/fixture.js'].includes(url.pathname)) return route.fulfill({contentType: 'text/javascript', body: fixtureJs});
-    if (url.origin === 'http://127.0.0.1:5182') return route.continue();
+    if (url.origin === localOrigin) return route.continue();
     return route.abort();
   });
   const editor = await browser.newPage(); await editor.goto('https://app.yampi.com.br/store/code-editor/');
@@ -74,6 +76,7 @@ try {
   await panel.waitForFunction(() => document.querySelector('#status').textContent === 'Aguardando sua confirmação');
   assert.deepEqual(await readdir(downloads), []);
   await panel.screenshot({path: path.join(repository, '.cache/panel-confirm-e2e.png')});
+  await panel.locator('#include-preview').click();
   const exported = driver.waitDownload(); await panel.locator('#export').click();
   await panel.waitForFunction(() => ['ZIP da loja baixado', 'Operação interrompida'].includes(document.querySelector('#status').textContent));
   assert.equal(await panel.locator('#status').textContent(), 'ZIP da loja baixado', await panel.locator('#detail').textContent());
@@ -125,8 +128,8 @@ try {
   await command(process.execPath, [path.join(project, '.yampi-sync/tools/dev.mjs'), '--check'], project);
   console.log('E2E: projeto exportado instalado e compilado.');
   const local = await createLocalServer(project); localServer = local.server;
-  await new Promise((resolve, reject) => {localServer.once('error', reject); localServer.listen(5182, '127.0.0.1', resolve);});
-  const preview = await browser.newPage(); await preview.goto('http://127.0.0.1:5182/preview?page=home');
+  await new Promise((resolve, reject) => {localServer.once('error', reject); localServer.listen(0, '127.0.0.1', resolve);});localOrigin='http://127.0.0.1:'+localServer.address().port;
+  const preview = await browser.newPage(); await preview.goto(localOrigin+'/preview?page=home');
   await preview.waitForFunction(() => document.querySelector('button')?.textContent?.includes('Clique para testar'));
   await preview.locator('button').click(); assert.match(await preview.locator('button').textContent(), /1/);
   assert.equal(await preview.locator('button').evaluate(button => getComputedStyle(button).borderTopColor), 'rgb(32, 99, 79)');
@@ -217,6 +220,21 @@ try {
   assert.equal(currentRead.value.value, new TextDecoder().decode(entries['tema/templates/long.twig']));
   assert.deepEqual(currentRead.operations, {dispatch: 0, save: 0, forbidden: 0});
   console.log('E2E aprovado: confirmação antes da cópia, CodeMirror antigo e atual, zero mutações na exportação, Shadow DOM, isolamento de loja/componente, erro de conexão e retry, PNG, projeto portátil com npm ci, Twig/Sass/Vue 2, importação de pasta/ZIP, envio com backup/reload e restauração. Nenhuma requisição alcançou a Yampi.');
+  // Exercise the actual panel -> authenticated worker -> public capture -> ZIP
+  // pipeline. The worker's fetch receives only the synthetic public responses.
+  await build({entryPoints:[path.join(repository,'tests/fixtures/visual-stores.ts')],bundle:true,platform:'node',format:'esm',outfile:path.join(temporary,'visual-fixtures.mjs')});
+  const {visualStore}=await import(pathToFileURL(path.join(temporary,'visual-fixtures.mjs'))),visual=visualStore('dark');
+  const previewOrigin=JSON.parse(new TextDecoder().decode(entries['.yampi-sync/manifest.json'])).context.previewOrigin;
+  const publicResources=Object.fromEntries(Object.entries(visual.resources).map(([url,resource])=>[url.replace(visual.snapshot.context.previewOrigin,previewOrigin),{...resource,...(resource.text?{text:resource.text.split(visual.snapshot.context.previewOrigin).join(previewOrigin)}:{})}]));
+  await worker.evaluate(resources=>{const realFetch=globalThis.fetch;globalThis.testVisualReads=[];globalThis.fetch=async(url,options)=>{const resource=resources[String(url)];if(!resource)return realFetch(url,options);if(options?.method!=='GET'||options?.credentials!=='omit'||options?.redirect!=='error')throw new Error('Leitura pública sem proteção');globalThis.testVisualReads.push(String(url));const body=resource.base64?Uint8Array.from(atob(resource.base64),c=>c.charCodeAt(0)):resource.text;const response=new Response(body,{headers:{'content-type':resource.type}});Object.defineProperty(response,'url',{value:String(url)});return response;};},publicResources);
+  await currentEditor.frameLocator('#test-toolbar').locator('#open').click();const visualTabId=await worker.evaluate(async()=> (await chrome.tabs.query({})).find(t=>t.url?.endsWith('?codemirror=current')).id);panel=await driver.attach(visualTabId);await panel.waitForFunction(()=>document.querySelector('#status').textContent==='Editor conectado');
+  await panel.locator('#export').click();await panel.waitForFunction(()=>['Código copiado; recursos visuais aguardam autorização','Operação interrompida'].includes(document.querySelector('#status').textContent));
+  assert.equal(await panel.locator('#status').textContent(),'Código copiado; recursos visuais aguardam autorização',await panel.locator('#detail').textContent());
+  const visualDownload=driver.waitDownload();await panel.locator('#preview-allow').click();await panel.waitForFunction(()=>['ZIP da loja baixado','Operação interrompida'].includes(document.querySelector('#status').textContent));assert.equal(await panel.locator('#status').textContent(),'ZIP da loja baixado',await panel.locator('#detail').textContent());
+  const visualPath=path.join(temporary,'visual.zip');await (await visualDownload).saveAs(visualPath);const visualEntries=unzipSync(new Uint8Array(await readFile(visualPath))),visualManifest=JSON.parse(new TextDecoder().decode(visualEntries['preview/manifest.json']));
+  assert.equal(visualManifest.source.association,'published-unverified');assert.equal(visualManifest.resources.length,6);assert.equal(JSON.parse(new TextDecoder().decode(visualEntries['preview/data.json'])).pages.length,5);assert.ok((await worker.evaluate(()=>globalThis.testVisualReads)).length>=11);
+  assert.deepEqual(await currentEditor.evaluate(()=>window.fictitiousOperations),{dispatch:0,save:0,forbidden:0});assert.equal(await currentEditor.evaluate(()=>window.fictitiousUnchanged()),true);assert.match(await panel.locator('#preview-info').textContent(),/rascunho não vinculado/);
+  console.log('E2E visual: painel real, autorização por origem, coleta pública estática e ZIP com páginas/assets; zero mutações no editor fictício.');
 } catch (error) {
   if (browser) for (const worker of browser.serviceWorkers()) console.error('Diagnóstico fictício:', JSON.stringify(await worker.evaluate(async () => ({contexts: await chrome.runtime.getContexts({}), sessions: await chrome.storage.session.get(null), tabs: await Promise.all((await chrome.tabs.query({})).map(async t => ({url:t.url, title:await chrome.action.getTitle({tabId:t.id})})))})).catch(() => 'Worker indisponível'),null,2));
   await mkdir(path.join(repository, '.cache'), {recursive: true});
