@@ -8,13 +8,18 @@ Storefront identifica a loja virtual; code identifica os arquivos do editor; syn
 
 O nome é uma proposta. Repositório, pacote e extensão mantêm sua identidade atual nesta versão.
 
-## Direção aplicada na 0.3.1
+## Direção aplicada na 0.3.2
 
-Uma ferramenta de trabalho compacta, com fundo quase branco, texto em grafite e azul reservado para links e foco. Sem fontes remotas, bibliotecas novas, cartões repetidos, selos encapsulados ou bolinhas de conexão. A loja permanece no cabeçalho durante toda a operação.
+Uma ferramenta de trabalho compacta, com fundo quase branco, texto escuro e azul petróleo nas ações. A paleta deriva do ciano da Zirtuno, com saturação reduzida para leitura confortável. A logo original autorizada aparece em 18 px, na mesma linha de **Desenvolvido por Zirtuno**; o conjunto abre `https://www.instagram.com/zirtuno/` por clique. Não carrega fontes ou imagens remotas. A loja permanece no cabeçalho durante toda a operação.
 
 | Antes | Depois | Motivo |
 | --- | --- | --- |
-| Cartões arredondados para cada área | Seções abertas e divisórias finas | Dar prioridade ao conteúdo |
+| Botões e campos rígidos | Bordas de 8–12 px, hover suave e pressão curta | Tornar os controles mais convidativos |
+| Ações somente em grafite | Azul petróleo e fundos suaves de ciano/ardósia | Dar destaque à ação sem cores intensas |
+| Identidade apenas em texto | Ícone de código e pequena assinatura Zirtuno | Identificar a ferramenta e sua autoria |
+| Ícone genérico com aviso abreviado | Símbolo de código e tooltip com o nome do editor | Explicar onde usar a extensão |
+| Clique fora do editor sem orientação | Painel com botão para abrir o editor na mesma aba | Mostrar o próximo passo explicitamente |
+| Cartões repetidos para cada área | Seções abertas e divisórias finas | Dar prioridade ao conteúdo |
 | Abas em uma cápsula | Navegação com sublinhado | Identificar a operação ativa |
 | Selos coloridos na tabela | Resultado em texto, com cor complementar | Evitar depender de cor ou de decoração |
 | Instruções longas sempre abertas | Ajuda expansível perto da ação | Expor detalhes quando necessários |
@@ -28,6 +33,8 @@ Uma ferramenta de trabalho compacta, com fundo quase branco, texto em grafite e 
 - A troca por teclado é imediata; o foco tem contorno visível. Movimento reduzido desativa deslocamentos e transições.
 - Textos, nomes de loja e caminhos podem quebrar linha. A tabela e o código têm rolagem própria quando necessário.
 - Confirmação de leitura, nome da loja no envio, comparação de versões, backups e diagnóstico de erros continuam presentes. Abrir o painel não inicia a cópia.
+- Tutoriais e textos explicativos são preservados. Botões desabilitados explicam o requisito pendente no hover.
+- O painel fora do editor serve somente para orientação. Seu botão navega para o endereço fixo do editor mediante clique; não pode se autenticar como painel de código. Fechamentos atrasados da orientação não desativam o novo painel.
 
 ## Distribuição e privacidade
 

@@ -2,9 +2,14 @@ import type {Command} from './bridge';
 import {assertContext, validateContext} from '../core/model';
 import {publicUrl} from '../core/preview';
 import {fetchPublicResource} from './public-fetch';
+import {isEditorURL as allowed, GUIDE_TITLE, EDITOR_TITLE} from './toolbar';
 type Session = {tabId: number; editorUrl: string; documentId?: string; locked: boolean; access?: 'read' | 'write'; previewOrigins?: string[]};
 const inFlight = new Map<string, Set<Promise<unknown>>>();
 const ports = new Map<string, Set<Promise<string>>>();
+const panelRevision = new Map<number, number>();
+function nextPanelRevision(tabId: number): void {
+  panelRevision.set(tabId, (panelRevision.get(tabId) || 0) + 1);
+}
 let sessionQueue = Promise.resolve();
 async function serialize<T>(job: () => Promise<T>): Promise<T> {
   const previous = sessionQueue;
@@ -15,11 +20,6 @@ async function serialize<T>(job: () => Promise<T>): Promise<T> {
 }
 async function getSession(token: string): Promise<Session | undefined> {
   return (await chrome.storage.session.get(token))[token] as Session | undefined;
-}
-function allowed(url?: string): boolean {
-  if (!url) return false;
-  const u = new URL(url);
-  return u.origin === 'https://app.yampi.com.br' && /^\/store\/code-editor\/?$/.test(u.pathname);
 }
 function panelSender(sender: chrome.runtime.MessageSender): boolean {
   // Native side-panel messages omit documentId/frameId/tab. A tab or iframe must never impersonate one.
@@ -69,9 +69,19 @@ async function reloadEditor(tabId: number): Promise<void> {
   });
 }
 export async function openEditorPanel(tab: chrome.tabs.Tab): Promise<void> {
-  if (tab.id === undefined || !allowed(tab.url)) {
-    await chrome.action.setBadgeText({text: 'Yampi', tabId: tab.id});
-    await chrome.action.setTitle({title: 'Abra o editor de código em app.yampi.com.br e clique novamente.', tabId: tab.id});
+  if (tab.id === undefined) return;
+  nextPanelRevision(tab.id);
+  if (!allowed(tab.url)) {
+    const configuring = chrome.sidePanel.setOptions({tabId: tab.id, path: `guide.html?tab=${tab.id}`, enabled: true});
+    const opening = chrome.sidePanel.open({tabId: tab.id});
+    try {
+      await Promise.all([configuring, opening]);
+      await chrome.action.setBadgeText({text: '', tabId: tab.id});
+      await chrome.action.setTitle({title: GUIDE_TITLE, tabId: tab.id});
+    } catch (error) {
+      await chrome.action.setBadgeText({text: '!', tabId: tab.id});
+      await chrome.action.setTitle({title: error instanceof Error ? error.message : String(error), tabId: tab.id});
+    }
     return;
   }
   // Use a stable, tab-specific path. Chrome receives both calls in order, before any awaited storage work.
@@ -95,6 +105,7 @@ export async function openEditorPanel(tab: chrome.tabs.Tab): Promise<void> {
     await configuring; await opening;
     await chrome.runtime.sendMessage({editorClicked: token}).catch(() => {});
     await chrome.action.setBadgeText({text: '', tabId: tab.id});
+    await chrome.action.setTitle({title: EDITOR_TITLE, tabId: tab.id});
   } catch (error) {
     await Promise.allSettled([configuring, opening]);
     await chrome.action.setBadgeText({text: '!', tabId: tab.id});
@@ -105,16 +116,34 @@ chrome.action.onClicked.addListener(openEditorPanel);
 // A manifest default_path enables a global panel on every tab. Keep the default
 // disabled; only an explicit toolbar click enables the selected editor tab.
 void chrome.sidePanel.setOptions({enabled: false}).catch(() => {});
+chrome.runtime.onInstalled.addListener(() => {
+  // Clear old tab-specific badges/tooltips when upgrading; no page access or injection.
+  void chrome.tabs.query({}).then(tabs => Promise.allSettled(tabs.filter(tab => tab.id !== undefined).map(async tab => {
+    await chrome.action.setBadgeText({text: '', tabId: tab.id});
+    await chrome.action.setTitle({title: allowed(tab.url) ? EDITOR_TITLE : GUIDE_TITLE, tabId: tab.id});
+  }))).catch(() => {});
+});
 chrome.tabs.onUpdated.addListener((id, change) => {
-  if (change.url && !allowed(change.url)) void chrome.sidePanel.setOptions({tabId: id, enabled: false}).catch(() => {});
+  if (change.url) {
+    nextPanelRevision(id);
+    void chrome.sidePanel.setOptions({tabId: id, enabled: false}).catch(() => {});
+    void chrome.action.setBadgeText({text: '', tabId: id}).catch(() => {});
+    void chrome.action.setTitle({title: allowed(change.url) ? EDITOR_TITLE : GUIDE_TITLE, tabId: id}).catch(() => {});
+  }
 });
 // onClosed is available in Chrome 142+. Older supported versions still benefit
 // from the global default being disabled and navigation being scoped to the tab.
 const panelEvents = chrome.sidePanel as typeof chrome.sidePanel & {
-  onClosed?: {addListener: (listener: (info: {tabId?: number}) => void) => void};
+  onClosed?: {addListener: (listener: (info: {tabId?: number; path: string}) => void) => void};
 };
 panelEvents.onClosed?.addListener(info => {
-  if (info.tabId !== undefined) void chrome.sidePanel.setOptions({tabId: info.tabId, enabled: false}).catch(() => {});
+  if (info.tabId === undefined) return;
+  const tabId = info.tabId, revision = panelRevision.get(tabId);
+  void chrome.sidePanel.getOptions({tabId}).then(options => {
+    // A late close event from the guide must not disable the newly opened editor panel.
+    if (panelRevision.get(tabId) !== revision || options.path !== info.path || !options.enabled) return;
+    return chrome.sidePanel.setOptions({tabId, enabled: false});
+  }).catch(() => {});
 });
 chrome.runtime.onConnect.addListener(port => {
   const token = port.name.startsWith('panel:') ? port.name.slice(6) : '';
@@ -182,7 +211,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (previewAction && session.access !== 'read') throw new Error('Captura visual exige uma operação de leitura.');
     if (cmd.op === 'write' && session.access !== 'write') throw new Error('Esta operação permite apenas copiar. Gravação bloqueada.');
     const [existing] = await chrome.scripting.executeScript({target: {tabId: session.tabId}, world: 'MAIN', func: () => {
-      return (window as unknown as {YampiThemeSyncBridge?: {version?: string}}).YampiThemeSyncBridge?.version === '0.3.1';
+      return (window as unknown as {YampiThemeSyncBridge?: {version?: string}}).YampiThemeSyncBridge?.version === '0.3.2';
     }});
     if (!existing?.result) await chrome.scripting.executeScript({target: {tabId: session.tabId}, world: 'MAIN', files: ['bridge.js']});
     const results = await chrome.scripting.executeScript({target: {tabId: session.tabId}, world: 'MAIN', func: async command => {
@@ -217,6 +246,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 chrome.tabs.onRemoved.addListener(async id => {
+  panelRevision.delete(id);
   await serialize(async () => {
     const stored = await chrome.storage.session.get(null);
     for (const [token, value] of Object.entries(stored)) if ((value as Session).tabId === id) await chrome.storage.session.remove(token);

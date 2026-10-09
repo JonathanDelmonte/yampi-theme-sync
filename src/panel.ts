@@ -85,11 +85,13 @@ function progress(p: Progress): void {
 }
 function controls(): void {
   $('export').toggleAttribute('disabled', working || !connected || !!pendingPreview);
+  $('export').title = working ? 'Aguarde a operação atual terminar.' : !connected ? 'Abra o Editor de código da Yampi e conecte a extensão.' : pendingPreview ? 'Finalize ou descarte a captura visual em preparação.' : 'Ler os arquivos da loja e baixar uma cópia em ZIP.';
   $('include-preview').toggleAttribute('disabled',working);
   $('preview-pending').hidden=!pendingPreview;
   for(const id of ['preview-allow','preview-partial','preview-discard'])$(id).toggleAttribute('disabled',working||!pendingPreview);
   $('compare').toggleAttribute('disabled', working || !connected || !baseline || !local);
   $('apply').toggleAttribute('disabled', working || !connected || !plan || !selected.size || $<HTMLInputElement>('confirm-store').value !== plan.context.storeName);
+  $('apply').title = working ? 'Aguarde a operação atual terminar.' : !connected ? 'Conecte ao Editor de código da Yampi.' : !plan || !selected.size ? 'Compare o projeto e selecione arquivos compatíveis para envio.' : $<HTMLInputElement>('confirm-store').value !== plan.context.storeName ? 'Digite o nome da loja de destino para confirmar.' : 'Salvar os arquivos selecionados com backup e conferência após recarregar.';
   for (const id of ['baseline', 'folder', 'confirm-store', 'clear', 'filter', 'demo-local', 'history', 'download-journal', 'retry', 'mode-export', 'mode-import', 'go-import']) $(id).toggleAttribute('disabled', working);
   $('retry').hidden = connected || !editorTab && !isDemo;
   $('restore').toggleAttribute('disabled', working || !connected || !journal);

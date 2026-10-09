@@ -8,7 +8,8 @@
 </head>
 <body>
   <header class="app-header">
-    <div class="brand"><h1>Yampi Theme Sync</h1><span class="version">0.3.1</span></div>
+    <div class="brand"><h1><img class="brand-icon" src="icons/icon32.png" alt="" width="24" height="24">Yampi Theme Sync</h1><span class="version">0.3.2</span></div>
+    <a class="maker" href="https://www.instagram.com/zirtuno/" target="_blank" rel="noopener noreferrer" aria-label="Desenvolvido por Zirtuno — abrir Instagram"><span>Desenvolvido por</span><img src="brand/zirtuno-logo.png" alt="" width="18" height="18"><span class="maker-name">Zirtuno</span></a>
     <div class="connection"><span id="store">Conectando ao editor…</span><span id="connection-state">Aguardando conexão</span></div>
   </header>
   <main class="app-main">
@@ -32,7 +33,7 @@
         <label class="check-label"><input type="checkbox" id="include-preview" checked><span>Incluir contexto visual da vitrine publicada</span></label>
         <details class="capture-help"><summary>O que está incluído na prévia?</summary><p>O Chrome solicita leitura somente das origens necessárias. Dados publicados podem diferir do rascunho. Nenhum serviço de carrinho, checkout ou gravação é executado. Sem essa captura, a prévia usa dados demonstrativos.</p></details>
       </div>
-      <button id="export" class="primary" disabled>Confirmar e baixar ZIP</button>
+      <button id="export" class="primary" aria-describedby="copy-safety" disabled>Confirmar e baixar ZIP</button>
       <small id="baseline-info">Nenhuma exportação concluída.</small>
       <p id="preview-info" class="note">Sem contexto visual capturado: a prévia será demonstrativa.</p>
       <div id="preview-pending" hidden>

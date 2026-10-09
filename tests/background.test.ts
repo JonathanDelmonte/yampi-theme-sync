@@ -5,7 +5,8 @@ let chromeMock: typeof chrome, clicked: (tab: chrome.tabs.Tab) => Promise<void>,
 let listener: (message: unknown, sender: chrome.runtime.MessageSender, response: (r: unknown) => void) => boolean;
 let connect: (port: chrome.runtime.Port) => void;
 let updated: Set<(id: number, change: {status?: string; url?: string}) => void>;
-let panelClosed: (info: {tabId?: number}) => void;
+let panelClosed: (info: {tabId?: number; path: string}) => void, installed: () => void;
+let panelOptions: Map<number, chrome.sidePanel.PanelOptions>;
 const extId = 'fictitious-test-extension', url = 'https://app.yampi.com.br/store/code-editor/';
 function sender(token: string, documentId?: string): chrome.runtime.MessageSender {
   return {id: extId, url: `chrome-extension://${extId}/panel.html?tab=${stored[token]?.tabId || 1}`, documentId};
@@ -31,18 +32,22 @@ function port(token: string) {
 }
 beforeEach(async () => {
   vi.resetModules(); stored = {}; tabs = new Map([[1, {id: 1, url}], [2, {id: 2, url}]]); contexts = new Map(); injected = new Set(); updated = new Set();
+  panelOptions = new Map();
   chromeMock = {
     runtime: {id: extId, getURL: (p: string) => `chrome-extension://${extId}/${p}`, sendMessage: vi.fn(async () => {}),
       getContexts: vi.fn(async (filter: {documentIds?: string[]; contextTypes?: string[]; documentUrls?: string[]}) => [...contexts.values()].filter(c => (!filter.documentIds || filter.documentIds.includes(c.documentId!)) && (!filter.documentUrls || filter.documentUrls.includes(c.documentUrl!)) && (!filter.contextTypes || filter.contextTypes.includes(c.contextType)))),
-      onMessage: {addListener: vi.fn(fn => {listener = fn;})}, onConnect: {addListener: vi.fn(fn => {connect = fn;})}},
+      onInstalled: {addListener: vi.fn(fn => {installed = fn;})}, onMessage: {addListener: vi.fn(fn => {listener = fn;})}, onConnect: {addListener: vi.fn(fn => {connect = fn;})}},
     action: {onClicked: {addListener: vi.fn(fn => {clicked = fn;})}, setBadgeText: vi.fn(async () => {}), setTitle: vi.fn(async () => {})},
     permissions:{contains:vi.fn(async()=>true)},
-    sidePanel: {open: vi.fn(async () => {}), setOptions: vi.fn(async () => {}), onClosed: {addListener: vi.fn(fn => {panelClosed = fn;})}},
+    sidePanel: {open: vi.fn(async () => {}),
+      setOptions: vi.fn(async (options: chrome.sidePanel.PanelOptions) => {if (options.tabId !== undefined) panelOptions.set(options.tabId, {...panelOptions.get(options.tabId), ...options});}),
+      getOptions: vi.fn(async ({tabId}: {tabId: number}) => panelOptions.get(tabId) || {}),
+      onClosed: {addListener: vi.fn(fn => {panelClosed = fn;})}},
     storage: {session: {
       get: vi.fn(async (key: string | null) => structuredClone(key === null ? stored : {[key]: stored[key]})),
       set: vi.fn(async (values: Record<string, Session>) => {Object.assign(stored, structuredClone(values));}),
       remove: vi.fn(async (key: string) => {delete stored[key];})}},
-    tabs: {create: vi.fn(), get: vi.fn(async (id: number) => {const tab = tabs.get(id); if (!tab) throw new Error('closed'); return tab;}),
+    tabs: {create: vi.fn(), query: vi.fn(async () => [...tabs.values()]), get: vi.fn(async (id: number) => {const tab = tabs.get(id); if (!tab) throw new Error('closed'); return tab;}),
       reload: vi.fn(async (id: number) => {for (const fn of updated) {fn(id, {status: 'loading'}); fn(id, {status: 'complete'});}}),
       onUpdated: {addListener: vi.fn(fn => updated.add(fn)), removeListener: vi.fn(fn => updated.delete(fn))}, onRemoved: {addListener: vi.fn(fn => {removed = fn;})}},
     scripting: {executeScript: vi.fn(async (request: {target: {tabId: number}; files?: string[]; args?: unknown[]}) => {
@@ -81,16 +86,48 @@ describe('painel lateral, permissões e isolamento do editor', () => {
   });
   test('fechar desativa a aba até um novo clique, sem encerrar gravação em andamento', async () => {
     const token = await open(); await message(token, {action: 'lock', access: 'write'});
-    panelClosed({tabId: 1});
-    expect(chromeMock.sidePanel.setOptions).toHaveBeenLastCalledWith({tabId: 1, enabled: false});
+    panelClosed({tabId: 1, path: 'panel.html?tab=1'});
+    await vi.waitFor(() => expect(chromeMock.sidePanel.setOptions).toHaveBeenLastCalledWith({tabId: 1, enabled: false}));
     expect(stored[token].locked).toBe(true);
     for (const fn of updated) fn(1, {url: 'https://app.yampi.com.br/store/'});
     expect(chromeMock.sidePanel.setOptions).toHaveBeenLastCalledWith({tabId: 1, enabled: false});
     expect(chromeMock.sidePanel.open).toHaveBeenCalledTimes(1);
   });
-  test('fora do editor não abre painel e não injeta código', async () => {
+  test('fora do editor abre somente orientação nativa, sem sessão, navegação ou injeção', async () => {
     await clicked({id: 1, url: 'https://outro.invalid/'} as chrome.tabs.Tab);
-    expect(chromeMock.sidePanel.open).not.toHaveBeenCalled(); expect(chromeMock.scripting.executeScript).not.toHaveBeenCalled();
+    expect(chromeMock.sidePanel.open).toHaveBeenCalledWith({tabId: 1});
+    expect(chromeMock.sidePanel.setOptions).toHaveBeenCalledWith({tabId: 1, path: 'guide.html?tab=1', enabled: true});
+    expect(chromeMock.storage.session.set).not.toHaveBeenCalled();expect(chromeMock.scripting.executeScript).not.toHaveBeenCalled();
+    expect(chromeMock.tabs.create).not.toHaveBeenCalled();expect(stored).toEqual({});
+    expect(chromeMock.action.setBadgeText).toHaveBeenCalledWith({text: '', tabId: 1});
+  });
+  test('fechamento atrasado da orientação não desativa o painel do editor', async () => {
+    await clicked({id: 1, url: 'https://outro.invalid/'} as chrome.tabs.Tab);
+    await open();
+    panelClosed({tabId: 1, path: 'guide.html?tab=1'});
+    await vi.waitFor(() => expect(chromeMock.sidePanel.getOptions).toHaveBeenCalled());
+    expect(panelOptions.get(1)).toMatchObject({path: 'panel.html?tab=1', enabled: true});
+  });
+  test('novo clique invalida uma conferência de fechamento ainda pendente', async () => {
+    await open();
+    let finish!: (options: chrome.sidePanel.PanelOptions) => void;
+    vi.mocked(chromeMock.sidePanel.getOptions).mockImplementationOnce(() => new Promise(resolve => {finish = resolve;}));
+    panelClosed({tabId: 1, path: 'panel.html?tab=1'});
+    await open();
+    finish({path: 'panel.html?tab=1', enabled: true});
+    await Promise.resolve(); await Promise.resolve();
+    expect(panelOptions.get(1)).toMatchObject({path: 'panel.html?tab=1', enabled: true});
+  });
+  test('a orientação não pode se autenticar como painel de código', async () => {
+    const token=await open();
+    expect((await message(token,{action:'lock'},{id:extId,url:`chrome-extension://${extId}/guide.html?tab=1`})).ok).toBe(false);
+    expect(stored[token].locked).toBe(false);
+  });
+  test('atualização limpa os avisos antigos sem abrir painel ou ler páginas', async () => {
+    installed();
+    await vi.waitFor(()=>expect(chromeMock.action.setBadgeText).toHaveBeenCalledTimes(2));
+    expect(chromeMock.sidePanel.open).not.toHaveBeenCalled();expect(chromeMock.scripting.executeScript).not.toHaveBeenCalled();
+    expect(chromeMock.action.setTitle).toHaveBeenCalledWith({tabId:1,title:expect.stringContaining('Editor de código da Yampi')});
   });
   test('abre painel nativo antes de esperar storage, sem criar outra aba', async () => {
     const opening = clicked({id: 1, url} as chrome.tabs.Tab);

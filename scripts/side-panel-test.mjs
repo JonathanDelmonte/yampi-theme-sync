@@ -18,11 +18,11 @@ export async function nativePanelDriver(browser, downloadDirectory) {
     const timer = setTimeout(() => reject(new Error('Download não chegou ao driver do teste.')), 60000);
     waiters.push(value => {clearTimeout(timer); resolve(value);});
   });
-  async function attach(tabId) {
+  async function attach(tabId, page = 'panel') {
     let target;
     const deadline = Date.now() + 30000;
     while (!target && Date.now() < deadline) {
-      target = (await cdp.send('Target.getTargets')).targetInfos.find(t => t.type === 'page' && /\/panel.html\?tab=/.test(t.url)&&(!tabId||new URL(t.url).searchParams.get('tab')===String(tabId)));
+      target = (await cdp.send('Target.getTargets')).targetInfos.find(t => t.type === 'page' && new URL(t.url).pathname===`/${page}.html` && new URL(t.url).searchParams.has('tab')&&(!tabId||new URL(t.url).searchParams.get('tab')===String(tabId)));
       if (!target) await new Promise(r => setTimeout(r, 100));
     }
     if (!target) throw new Error('Painel lateral nativo não abriu.');
@@ -47,7 +47,7 @@ export async function nativePanelDriver(browser, downloadDirectory) {
     const waitForFunction = async fn => {
       const deadline = Date.now() + 45000;
       while (Date.now() < deadline) {
-        if (await evaluate(fn).catch(() => false) && await evaluate(() => document.querySelector('#cancel')?.hidden).catch(() => false)) return;
+        if (await evaluate(fn).catch(() => false) && await evaluate(() => !document.querySelector('#cancel') || document.querySelector('#cancel').hidden).catch(() => false)) return;
         await new Promise(r => setTimeout(r, 100));
       }
       throw new Error(`Timeout no painel: ${fn}`);

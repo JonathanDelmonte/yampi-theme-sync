@@ -1,9 +1,15 @@
 {
   "manifest_version": 3,
   "name": "Yampi Theme Sync",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "minimum_chrome_version": "120",
   "description": "Exporta e compara arquivos do tema Yampi. Envia alterações selecionadas com backup, sem publicar a loja.",
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
   "permissions": [
     "activeTab",
     "scripting",
@@ -15,7 +21,13 @@
     "default_path": "panel.html"
   },
   "action": {
-    "default_title": "Abrir Yampi Theme Sync neste editor"
+    "default_title": "Abra o Editor de código da Yampi. Clique para ver como baixar ou enviar arquivos.",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "24": "icons/icon24.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png"
+    }
   },
   "background": {
     "service_worker": "background.js",

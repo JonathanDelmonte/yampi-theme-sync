@@ -2,9 +2,11 @@
 
 Extensão independente para copiar o código do editor Yampi, trabalhar no computador e devolver os textos escolhidos com comparação e backup. O repositório público contém somente a ferramenta e exemplos fictícios; projetos e dados de lojas ficam fora dele.
 
-## Versão 0.3.1
+## Versão 0.3.2
 
-O painel usa seções abertas, abas com sublinhado, tipografia mais clara e ações em grafite. Selos de resultado e indicadores circulares foram substituídos por texto. Instruções complementares ficam em ajuda expansível, e as confirmações de cópia e envio continuam visíveis. Transições curtas respeitam movimento reduzido e navegação por teclado. [Proposta visual e nome técnico](docs/INTERFACE.md).
+O painel preserva os tutoriais e as seções abertas, com bordas arredondadas, ações em azul petróleo e tons suaves derivados da marca Zirtuno. A assinatura discreta no cabeçalho abre seu Instagram somente ao clicar. Abas com sublinhado, confirmações visíveis e transições curtas orientam cada etapa; movimento reduzido e navegação por teclado continuam respeitados. [Proposta visual e nome técnico](docs/INTERFACE.md).
+
+O novo ícone de código informa no hover que a extensão precisa do **Editor de código da Yampi**. Fora dessa tela, o clique abre uma orientação com botão para acessar o editor na mesma aba. Dentro do editor, abre diretamente o painel de cópia e envio. Nenhuma cópia começa ao abrir o painel.
 
 A exportação separa a cópia do código da captura visual e informa origem, recursos ausentes e alcance da validação. Compilar sem erros não comprova a aparência de uma loja real. A mudança de interface não amplia a validação real descrita abaixo.
 
@@ -25,7 +27,7 @@ Quando há configuração declarativa compatível no editor, ela tem prioridade.
 
 Baixe em [Releases](https://github.com/JonathanDelmonte/yampi-theme-sync/releases), extraia o ZIP da extensão e carregue a pasta em `chrome://extensions`, com modo de desenvolvedor e **Carregar sem compactação**. Para atualizar, substitua os arquivos na mesma pasta instalada e recarregue o cartão. [Instruções completas](docs/INSTALACAO.md).
 
-1. Abra `https://app.yampi.com.br/store/code-editor/` e clique no ícone. O painel abre na própria aba, sem copiar automaticamente.
+1. Abra `https://app.yampi.com.br/store/code-editor/` e clique no ícone. O painel abre na própria aba, sem copiar automaticamente. Se estiver em outra tela, a extensão mostra **Abrir editor de código da Yampi**; use esse botão e clique novamente no ícone depois que o editor carregar.
 2. Confira a loja. Deixe **Incluir contexto visual da vitrine publicada** marcado e clique em **Confirmar e baixar ZIP**. O Chrome pede leitura da origem da vitrine. Negar permite copiar o código com prévia demonstrativa.
 3. Para imagens/fontes em outras origens, o painel lista os destinos e aguarda **Autorizar recursos e finalizar ZIP**. CSS pode revelar outras dependências e exigir outra autorização. **Baixar com prévia parcial** mantém as falhas no relatório. Nenhum arquivo da Yampi é editado, salvo, excluído, criado, renomeado ou publicado durante a cópia.
 4. Extraia a exportação fora deste repositório e abra a pasta ou seu `.code-workspace` no VS Code. O nome vem do editor; somente nomes de arquivo/pacote são normalizados para Windows.
@@ -95,7 +97,7 @@ npm run test:preview
 npm run package
 ```
 
-`npm run dev` oferece a demonstração fictícia em `http://127.0.0.1:5181/demo.html?demo=1`. O pacote contém oito arquivos permitidos e sai em `releases/yampi-theme-sync-0.3.1.zip`, com SHA-256. Chrome/Edge com `sidePanel` são necessários; outros navegadores não foram validados. O painel global fica desativado e cada aba exige clique no ícone. Vue 2 é usado por compatibilidade, fora de manutenção; use projetos confiáveis e mantenha o servidor em localhost.
+`npm run dev` oferece a demonstração fictícia em `http://127.0.0.1:5181/demo.html?demo=1`. O pacote contém 16 arquivos permitidos e sai em `releases/yampi-theme-sync-0.3.2.zip`, com SHA-256. Ícones são gerados localmente; a logo original autorizada fica em `extension/brand/zirtuno-logo.png`. Chrome/Edge com `sidePanel` são necessários; outros navegadores não foram validados. O painel global fica desativado e cada aba exige clique no ícone. Vue 2 é usado por compatibilidade, fora de manutenção; use projetos confiáveis e mantenha o servidor em localhost.
 
 Testes cobrem leitura integral, escrita somente fictícia, backup, conflitos, restauração, parser, privacidade e isolamento. Duas lojas fictícias, escura/clara, têm identidade, fontes, cores, produtos e rotas distintas. ZIPs são movidos e executados com acesso à loja bloqueado. Capturas independentes de referência são comparadas com a mesma home/estado/viewport após fontes/imagens carregarem. [Resultados e evidências](docs/VALIDACAO.md).
 

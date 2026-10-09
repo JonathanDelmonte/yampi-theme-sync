@@ -9,6 +9,7 @@ import {createLocalServer} from '../local-runtime/dev.mjs';
 import {nativePanelDriver} from './side-panel-test.mjs';
 import {build} from 'esbuild';
 import {pathToFileURL} from 'node:url';
+import {extensionFiles} from './distribution.mjs';
 const repository = path.resolve(import.meta.dirname, '..');
 const temporary = await mkdtemp(path.join(os.tmpdir(), 'yampi-e2e-ficticio-'));
 let browser, localServer, panel,localOrigin;
@@ -22,15 +23,15 @@ async function command(cmd, args, cwd) {
 try {
   const extension = path.join(temporary, 'extension'), project = path.join(temporary, 'project');
   await mkdir(extension); await mkdir(project);
-  for (const file of ['manifest.json', 'background.js', 'bridge.js', 'panel.js', 'panel.html', 'panel.css']) await cp(path.join(repository, 'dist', file), path.join(extension, file));
+  for (const file of extensionFiles) {await mkdir(path.dirname(path.join(extension,file)),{recursive:true});await cp(path.join(repository, 'dist', file), path.join(extension, file));}
   const manifest = JSON.parse(await readFile(path.join(extension, 'manifest.json'), 'utf8'));
   // Test-only permission. Every HTTP request to this origin is fulfilled below by the fixture; nothing reaches Yampi.
   manifest.host_permissions = ['https://app.yampi.com.br/*','https://loja-exemplo.invalid/*','https://dark-cdn.invalid/*'];
   manifest.background.service_worker = 'test-worker.js';
   manifest.web_accessible_resources = [{resources: ['test-launcher.html', 'test-launcher.js'], matches: ['https://app.yampi.com.br/*']}];
-  await writeFile(path.join(extension, 'test-worker.js'), `import {openEditorPanel} from './background.js'; const panels = new Set(); globalThis.testDisconnectPanels = () => {for (const port of panels) port.disconnect(); panels.clear();}; chrome.runtime.onConnect.addListener(port => {panels.add(port); port.onDisconnect.addListener(() => panels.delete(port));}); globalThis.testHeartbeats = 0; globalThis.testRequests = []; chrome.runtime.onMessage.addListener((message, sender, reply) => {if (message?.action === 'heartbeat') globalThis.testHeartbeats++; if (message?.command || message?.action === 'lock') globalThis.testRequests.push(message.command?.op || 'lock:' + message.access); if (message?.testToolbarClick && sender.url === chrome.runtime.getURL('test-launcher.html') && sender.tab) {void openEditorPanel(sender.tab).then(() => reply(true)); return true;}});`);
+  await writeFile(path.join(extension, 'test-worker.js'), `import {openEditorPanel} from './background.js'; const panels = new Set(); globalThis.testDisconnectPanels = () => {for (const port of panels) port.disconnect(); panels.clear();}; chrome.runtime.onConnect.addListener(port => {panels.add(port); port.onDisconnect.addListener(() => panels.delete(port));}); globalThis.testHeartbeats = 0; globalThis.testRequests = []; globalThis.testClicks=[]; chrome.runtime.onMessage.addListener((message, sender, reply) => {if (message?.action === 'heartbeat') globalThis.testHeartbeats++; if (message?.command || message?.action === 'lock') globalThis.testRequests.push(message.command?.op || 'lock:' + message.access); if(message?.testToolbarClick)globalThis.testClicks.push({url:sender.url,tab:sender.tab}); if (message?.testToolbarClick && sender.url === chrome.runtime.getURL('test-launcher.html') && sender.tab) {void openEditorPanel(sender.tab).then(() => reply(true),error=>reply({error:String(error)})); return true;}});`);
   await writeFile(path.join(extension, 'test-launcher.html'), '<button id="open">Clique do ícone (teste fictício)</button><script src="test-launcher.js"></script>');
-  await writeFile(path.join(extension, 'test-launcher.js'), `document.querySelector('button').onclick = () => chrome.runtime.sendMessage({testToolbarClick:true}); document.body.dataset.ready='true';`);
+  await writeFile(path.join(extension, 'test-launcher.js'), `document.querySelector('button').onclick = async () => {document.body.dataset.clicked='true'; try{const result=await chrome.runtime.sendMessage({testToolbarClick:true}); document.body.dataset.result=JSON.stringify(result);}catch(error){document.body.dataset.result=String(error);}}; document.body.dataset.ready='true';`);
   await writeFile(path.join(extension, 'manifest.json'), JSON.stringify(manifest));
   browser = await chromium.launchPersistentContext(path.join(temporary, 'browser'), {channel: 'chromium', headless: true, acceptDownloads: true, args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`]});
   browser.setDefaultTimeout(30000);
@@ -43,12 +44,31 @@ try {
   await browser.route('**/*', async route => {
     const url = new URL(route.request().url());
     if (url.protocol === 'chrome-extension:') return route.continue();
+    if (url.origin === 'https://app.yampi.com.br' && url.pathname === '/') return route.fulfill({contentType:'text/html',body:`<h1>Painel fictício fora do editor</h1><iframe id="test-toolbar" src="chrome-extension://${extensionId}/test-launcher.html"></iframe>`});
     if (url.origin === 'https://app.yampi.com.br' && /^\/store\/code-editor\/?$/.test(url.pathname)) return route.fulfill({contentType: 'text/html', body: html});
     if (url.origin === 'https://app.yampi.com.br' && ['/store/code-editor/fixture.js', '/store/fixture.js'].includes(url.pathname)) return route.fulfill({contentType: 'text/javascript', body: fixtureJs});
     if (url.origin === localOrigin) return route.continue();
     return route.abort();
   });
-  const editor = await browser.newPage(); await editor.goto('https://app.yampi.com.br/store/code-editor/');
+  const editor = await browser.newPage(); await editor.goto('https://app.yampi.com.br/');
+  const downloads = path.join(temporary, 'downloads'); await mkdir(downloads);
+  await mkdir(path.join(repository, '.cache'), {recursive: true});
+  const driver = await nativePanelDriver(browser, downloads);
+  const pagesBefore = browser.pages().length;
+  await editor.frameLocator('#test-toolbar').locator('body[data-ready="true"]').waitFor();
+  await editor.frameLocator('#test-toolbar').locator('#open').click();
+  const guide = await driver.attach(undefined,'guide');
+  await guide.waitForFunction(()=>document.body.dataset.guideReady==='true');
+  assert.equal(await guide.locator('#guide-title').textContent(),'Abra o editor de código da Yampi.');
+  assert.deepEqual(await worker.evaluate(()=>chrome.storage.session.get(null)),{});
+  assert.deepEqual(await worker.evaluate(()=>globalThis.testRequests),[]);
+  assert.deepEqual(await readdir(downloads),[]);
+  await guide.screenshot({path:path.join(repository,'.cache/panel-guide-e2e.png')});
+  await guide.locator('#open-editor').click();
+  await editor.waitForURL('https://app.yampi.com.br/store/code-editor/');
+  assert.equal(browser.pages().length,pagesBefore);
+  assert.deepEqual(await worker.evaluate(()=>globalThis.testRequests),[]);
+  console.log('E2E: orientação nativa fora do editor; botão abre o editor na mesma aba, sem sessão, injeção ou cópia automática.');
   await editor.locator('#test-info').waitFor();
   await editor.waitForFunction(() => document.querySelector('yampi-code-editor')?.shadowRoot?.querySelector('aside .file-name'));
   // Surrounding-app text and controls must never be mistaken for the editor, including enabled saves.
@@ -60,12 +80,12 @@ try {
     root.querySelector('#editor-title').textContent = 'Arquivos do tema';
     root.querySelector('header a span').textContent = 'Abrir prévia';
   });
-  const downloads = path.join(temporary, 'downloads'); await mkdir(downloads);
-  await mkdir(path.join(repository, '.cache'), {recursive: true});
-  const driver = await nativePanelDriver(browser, downloads);
-  const pagesBefore = browser.pages().length;
   await editor.frameLocator('#test-toolbar').locator('body[data-ready="true"]').waitFor();
-  await editor.frameLocator('#test-toolbar').locator('#open').click();
+  // The native guide is closing and changes the browser's page bounds. Keyboard
+  // activation keeps the real user gesture without stale pointer coordinates.
+  await editor.bringToFront();
+  await editor.frameLocator('#test-toolbar').locator('#open').press('Enter');
+  await editor.frameLocator('#test-toolbar').locator('body[data-result="true"]').waitFor();
   panel = await driver.attach();
   console.log('E2E: painel lateral nativo iniciado pelo handler do ícone.');
   await panel.waitForFunction(() => document.querySelector('#status').textContent === 'Editor conectado');
@@ -236,7 +256,8 @@ try {
   assert.deepEqual(await currentEditor.evaluate(()=>window.fictitiousOperations),{dispatch:0,save:0,forbidden:0});assert.equal(await currentEditor.evaluate(()=>window.fictitiousUnchanged()),true);assert.match(await panel.locator('#preview-info').textContent(),/rascunho não vinculado/);
   console.log('E2E visual: painel real, autorização por origem, coleta pública estática e ZIP com páginas/assets; zero mutações no editor fictício.');
 } catch (error) {
-  if (browser) for (const worker of browser.serviceWorkers()) console.error('Diagnóstico fictício:', JSON.stringify(await worker.evaluate(async () => ({contexts: await chrome.runtime.getContexts({}), sessions: await chrome.storage.session.get(null), tabs: await Promise.all((await chrome.tabs.query({})).map(async t => ({url:t.url, title:await chrome.action.getTitle({tabId:t.id})})))})).catch(() => 'Worker indisponível'),null,2));
+  if (browser) for (const worker of browser.serviceWorkers()) console.error('Diagnóstico fictício:', JSON.stringify(await worker.evaluate(async () => ({clicks:globalThis.testClicks,contexts: await chrome.runtime.getContexts({}), sessions: await chrome.storage.session.get(null), tabs: await Promise.all((await chrome.tabs.query({})).map(async t => ({url:t.url, title:await chrome.action.getTitle({tabId:t.id})})))})).catch(() => 'Worker indisponível'),null,2));
+  if(browser)for(const page of browser.pages())for(const frame of page.frames().filter(frame=>frame.url().includes('test-launcher')))console.error('Launcher fictício:',await frame.evaluate(()=>({...document.body.dataset})).catch(()=>null));
   await mkdir(path.join(repository, '.cache'), {recursive: true});
   if (panel) {
     // A tab-scoped panel may be hidden while the preview tab is active. A
