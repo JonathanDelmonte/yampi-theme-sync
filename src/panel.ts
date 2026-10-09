@@ -39,7 +39,7 @@ if (isDemo) {
 } else {
   connection = new PanelConnection(chrome.runtime, () => {
     const wasConnected = connected; connected = false;
-    controller?.abort(); $('connection-dot').classList.remove('connected');
+    controller?.abort(); $('connection-state').textContent = 'Editor desconectado';
     // Preserve the precise initial diagnostic instead of replacing it with a generic disconnect.
     if (wasConnected && !working) status('Conexão encerrada', 'Clique em Tentar conectar novamente. Nenhum envio será retomado automaticamente.', true);
     controls();
@@ -48,14 +48,22 @@ if (isDemo) {
   window.addEventListener('pagehide', () => connection?.close());
 }
 const adapter = new BrowserAdapter(rpc);
-function mode(importing: boolean): void {
+document.addEventListener('keydown', () => {document.body.dataset.input = 'keyboard';});
+document.addEventListener('pointerdown', () => {delete document.body.dataset.input;});
+function mode(importing: boolean, pointerClick = false): void {
+  const incoming = $(importing ? 'import-section' : 'export-section');
+  const changed = incoming.hidden;
   $('export-section').hidden = importing; $('import-section').hidden = !importing;
   $('mode-export').setAttribute('aria-pressed', String(!importing)); $('mode-import').setAttribute('aria-pressed', String(importing));
   $('review').hidden = !importing || !plan; $('send-section').hidden = !importing || !plan || !selected.size;
   if (!importing) $('diff').hidden = true;
+  if (changed) incoming.getAnimations().forEach(animation => animation.cancel());
+  if (changed && pointerClick && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    incoming.animate([{opacity: 0, transform: 'translateY(4px)'}, {opacity: 1, transform: 'translateY(0)'}], {duration: 180, easing: 'cubic-bezier(.23,1,.32,1)'});
+  }
 }
-$('mode-export').addEventListener('click', () => mode(false));
-for (const id of ['mode-import', 'go-import']) $(id).addEventListener('click', () => mode(true));
+$('mode-export').addEventListener('click', event => mode(false, event.detail > 0));
+for (const id of ['mode-import', 'go-import']) $(id).addEventListener('click', event => mode(true, event.detail > 0));
 if (isDemo) $('demo-local').addEventListener('click', () => {
   if (working || !baseline) {status('Exporte a loja fictícia primeiro.'); return;}
   const sample = {...baseline.files};
@@ -142,7 +150,7 @@ function setLocal(files: Files, assets: Assets = {}): void {
 const labels: Record<PlanRow['status'], string> = {
   update: 'Pronto para envio', unchanged: 'Sem alterações', 'remote-only': 'Mudou apenas na loja', 'already-applied': 'Já está na loja', conflict: 'Conflito', 'missing-local': 'Ausente localmente · preservado', 'missing-remote': 'Removido na loja · bloqueado', 'new-local': 'Novo arquivo · bloqueado', unsupported: 'Tipo sem suporte · bloqueado'
 };
-function showDiff(row: PlanRow): void {
+function showDiff(row: PlanRow, pointerClick: boolean): void {
   $('diff-title').textContent = row.path;
   for (const [kind, id] of [['base', 'diff-base'], ['local', 'diff-local'], ['remote', 'diff-remote']] as const) {
     if (row.image) {
@@ -150,7 +158,8 @@ function showDiff(row: PlanRow): void {
       $(id).textContent = bytes ? `Imagem · ${bytes.length} bytes. Imagens alteradas não são enviadas nesta versão.` : '(ausente)';
     } else $(id).textContent = row[kind] ?? '(ausente)';
   }
-  $('diff').hidden = false; $('diff').scrollIntoView({behavior: 'smooth', block: 'nearest'});
+  $('diff').hidden = false;
+  $('diff').scrollIntoView({behavior: pointerClick && !matchMedia('(prefers-reduced-motion: reduce)').matches ? 'smooth' : 'instant', block: 'nearest'});
 }
 function renderPlan(): void {
   if (!plan) return;
@@ -168,8 +177,8 @@ function renderPlan(): void {
     checkbox.addEventListener('change', () => {checkbox.checked ? selected.add(row.path) : selected.delete(row.path); renderPlan(); controls();});
     td.append(checkbox);
     const pathCell = document.createElement('td'); pathCell.className = 'path'; pathCell.textContent = row.path;
-    const result = document.createElement('td'), badge = document.createElement('span'); badge.className = `badge ${row.status}`; badge.textContent = labels[row.status]; result.append(badge);
-    const action = document.createElement('td'), button = document.createElement('button'); button.textContent = 'Ver versões'; button.addEventListener('click', () => showDiff(row)); action.append(button);
+    const result = document.createElement('td'), label = document.createElement('span'); label.className = `row-status ${row.status}`; label.textContent = labels[row.status]; result.append(label);
+    const action = document.createElement('td'), button = document.createElement('button'); button.textContent = 'Ver versões'; button.addEventListener('click', event => showDiff(row, event.detail > 0)); action.append(button);
     tr.append(td, pathCell, result, action); $('rows').append(tr);
   }
   $('review').hidden = false;
@@ -318,11 +327,11 @@ $('clear').addEventListener('click', async () => {
 });
 async function connect(): Promise<void> {
   if (working) return;
-  connected = false; $('connection-dot').classList.remove('connected');
+  connected = false; $('connection-state').textContent = 'Editor desconectado';
   await run(async () => {
   status('Conectando ao editor…');
   const context = await adapter.context(); currentContext=context; connected = true;
-  $('store').textContent = context.storeName; $('connection-dot').classList.add('connected');
+  $('store').textContent = context.storeName; $('connection-state').textContent = 'Editor conectado';
   $<HTMLInputElement>('confirm-store').placeholder = context.storeName;
   const previous = await get<Snapshot>(`baseline:${await contextKey(context)}`) || await get<Snapshot>('baseline');
   if (previous) try {assertContext(previous.context, context); setBaseline(previous);} catch { /* A backup from another shop is never selected implicitly. */ }

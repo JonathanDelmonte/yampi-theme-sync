@@ -1,6 +1,6 @@
 # Instalação local
 
-1. Extraia `yampi-theme-sync-0.3.0.zip` em uma pasta fixa. Não carregue o ZIP diretamente.
+1. Extraia `yampi-theme-sync-0.3.1.zip` em uma pasta fixa. Não carregue o ZIP diretamente.
 2. Abra a página de extensões do Chrome (`chrome://extensions`) ou Edge (`edge://extensions`). O painel lateral depende da API `sidePanel`, disponível no Chrome 120 ou posterior. Outros navegadores não foram validados.
 3. Ative o modo de desenvolvedor e escolha **Carregar sem compactação** / **Load unpacked**.
 4. Selecione a pasta que contém `manifest.json`, `background.js`, `bridge.js`, `panel.js`, `panel.html` e `panel.css`.
@@ -10,7 +10,7 @@ Para atualizar uma instalação anterior da versão 0.2/0.3, extraia o novo ZIP 
 
 Durante desenvolvimento, `npm run build` atualiza a pasta `dist`. Carregue essa pasta e clique em Recarregar na página de extensões após mudar o código. Em seguida, recarregue a aba Yampi, sem rascunhos pendentes, para substituir o adaptador anterior.
 
-O pacote é uma versão local de desenvolvimento, sem instalação automática ou aprovação de uma loja oficial de extensões. A versão 0.3 deve ser validada primeiro em ambiente controlado. A gravação foi testada somente no editor fictício, inclusive em Chromium com extensão Manifest V3. O teste usa permissão adicional somente na cópia temporária; o proprietário concluiu uma exportação textual real na 0.2.3, mas a 0.3.0 ainda precisa de nova conferência no painel real. Qualquer teste real de gravação depende de instruções específicas sobre ambiente e arquivo.
+O pacote é uma versão local de desenvolvimento, sem instalação automática ou aprovação de uma loja oficial de extensões. A versão 0.3 deve ser validada primeiro em ambiente controlado. A gravação foi testada somente no editor fictício, inclusive em Chromium com extensão Manifest V3. O teste usa permissão adicional somente na cópia temporária; o proprietário concluiu uma exportação textual real na 0.2.3, mas a 0.3.1 ainda precisa de nova conferência no painel real. Qualquer teste real de gravação depende de instruções específicas sobre ambiente e arquivo.
 
 Ao clicar no ícone dentro do editor, abre-se um painel lateral na mesma aba. Confira a loja no topo e clique em **Confirmar e baixar ZIP**. Nenhum arquivo é aberto ou copiado antes desse botão, e nenhum arquivo precisa ser importado para exportar. A extensão abre os arquivos para leitura, sem editar, salvar, excluir ou publicar conteúdo na Yampi. O worker bloqueia comandos de gravação durante a cópia. Acompanhe o progresso; o ZIP é baixado ao concluir. Um erro interrompe a cópia e mostra o motivo.
 
@@ -20,7 +20,7 @@ Mantenha a aba da Yampi aberta, sem edições manuais enquanto a extensão traba
 
 Dados das lojas nunca devem ser copiados para o repositório da extensão. A cópia original e os backups são guardados localmente; a extensão não os envia ao GitHub.
 
-## Contexto visual na 0.3.0
+## Contexto visual na 0.3.1
 
 Deixe a captura visual marcada e autorize a origem da vitrine quando o Chrome solicitar. Se imagens/fontes estiverem em outras origens, o painel lista esses destinos: clique em **Autorizar recursos e finalizar ZIP**. Uma dependência de CSS pode exigir outra autorização. **Baixar com prévia parcial** registra recursos ausentes; negar/desmarcar a captura visual mantém a cópia do código com prévia demonstrativa. Nenhuma permissão global é concedida automaticamente.
 

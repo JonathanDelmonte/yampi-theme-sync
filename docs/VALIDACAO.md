@@ -1,6 +1,14 @@
-# Validação da versão 0.3.0
+# Validação da versão 0.3.1
 
 Execução em 09/10/2026, Windows, Node.js 24.15.0. Fixtures, imagens e fonte usadas nos testes são inteiramente fictícias. Nenhuma escrita real na Yampi foi realizada.
+
+## Interface na 0.3.1
+
+`npm ci`, `npm run check` e `npm run package` passaram com Node 24.15.0 e os 132 testes existentes. O fluxo foi repetido no painel lateral nativo de Chromium, com confirmação antes da cópia, exportação sem mutações, importação de pasta/ZIP, envio fictício com backup/reload, bloqueio de conflito na restauração e reconexão.
+
+A interface foi exercitada em 280, 320, 360, 480 e 800 pixels, incluindo download, importação, comparação, confirmação de envio, recuperação e erro de leitura. Não houve transbordamento horizontal da página. A tabela tem rolagem própria e pode ser percorrida por teclado, com foco visível. Entrada de seção por ponteiro usa 180 ms; ativação por teclado e movimento reduzido não usam a animação. Nenhuma operação de escrita foi executada nessa conferência visual.
+
+Evidências locais ignoradas pelo Git: `.cache/panel-design/report.json`, capturas `export-*.png`, `import-*.png`, `review-*.png`, `backup-*.png`, `error-*.png` e teste de conferência `.cache/panel-design-check.mjs`. As verificações da prévia local descritas abaixo foram realizadas na 0.3.0; seu runtime não foi alterado na 0.3.1. Esses resultados são fictícios e não ampliam a validação real.
 
 ## Diagnóstico do incidente
 
@@ -47,7 +55,7 @@ Os testes de navegador usam Chromium instalado pelo Playwright. Portas de teste 
 
 ## Nova exportação e projetos existentes
 
-Recarregue a extensão 0.3.0 na mesma pasta instalada, feche o painel antigo e recarregue o editor sem rascunhos pendentes. Confira a loja e confirme a cópia com captura visual habilitada. Autorize somente as origens apresentadas; se negar, a extensão indica a prévia parcial/demonstrativa. Extraia em uma pasta nova e execute os quatro comandos de integridade, compilação, prévia e retorno descritos no README.
+Recarregue a extensão 0.3.1 na mesma pasta instalada, feche o painel antigo e recarregue o editor sem rascunhos pendentes. Confira a loja e confirme a cópia com captura visual habilitada. Autorize somente as origens apresentadas; se negar, a extensão indica a prévia parcial/demonstrativa. Extraia em uma pasta nova e execute os quatro comandos de integridade, compilação, prévia e retorno descritos no README.
 
 Para trocar apenas ferramentas antigas, use `node scripts/update-project.mjs "C:/projeto"` e depois `--apply`. Dry-run não escreve. Ferramentas modificadas pelo usuário e dependências diferentes são recusadas antes da gravação; scripts personalizados, dados, configuração, tema, baseline e manifesto são preservados. Backup/journal precedem a atualização, com rechecagem contra edições concorrentes. Uma atualização não inventa contexto ausente: uma nova captura separada é necessária para isso.
 
