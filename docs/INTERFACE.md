@@ -1,12 +1,14 @@
-# Interface e proposta de nome
+# Interface e identidade
 
-## Nome recomendado
+## Nomes aprovados
 
-`yampi-storefront-code-sync`, com nome de exibição **Yampi Storefront Code Sync**.
+Repositório, pacote npm e pasta de desenvolvimento: **yampi-virtual-store-code-extractor-synchronizer**.
 
-Storefront identifica a loja virtual; code identifica os arquivos do editor; sync inclui exportação, comparação e retorno. Extractor sozinho descreve apenas a saída dos arquivos. Theme é o termo técnico do conjunto de arquivos na Yampi, mas code deixa mais evidente a finalidade para quem procura a ferramenta.
+Nome de exibição no Chrome e no painel: **Yampi Code Sync**. Autoria: **Zirtuno**.
 
-O nome é uma proposta. Repositório, pacote e extensão mantêm sua identidade atual nesta versão.
+Virtual store identifica a loja virtual; code identifica os arquivos do editor; extractor e synchronizer descrevem a cópia para o computador e o retorno. O nome curto evita ocupar o cabeçalho inteiro da extensão. Os identificadores internos de arquivos e histórico são preservados para aceitar exportações anteriores.
+
+A versão 0.3.3 usa a logo Y/código fornecida pelo proprietário, redimensionada com proporções e transparência preservadas. A pequena assinatura Zirtuno continua no cabeçalho. O Chrome controla a composição e o espaço entre descrição e ID na sua página de extensões; a descrição foi reduzida para uma frase curta, sem HTML ou artifícios de quebra de linha.
 
 ## Direção aplicada na 0.3.2
 
@@ -38,4 +40,4 @@ Uma ferramenta de trabalho compacta, com fundo quase branco, texto escuro e azul
 
 ## Distribuição e privacidade
 
-Somente o pacote atual fica disponível nos releases. O histórico Git preserva alterações de código para auditoria e correções, sem acumular instaladores antigos nos releases. Nenhum tema, exportação, backup ou dado de loja deve entrar no repositório ou no pacote da extensão. Exemplos e testes são fictícios.
+Somente o pacote atual fica disponível nos releases. O histórico Git preserva alterações de código para auditoria e correções, sem acumular instaladores antigos nos releases. A geração local usa `.cache/package/`; ZIPs e hashes são descartáveis depois do upload confirmado. A pasta carregada sem compactação precisa permanecer no computador enquanto estiver instalada. Nenhum tema, exportação, backup ou dado de loja deve entrar no repositório ou no pacote da extensão. Exemplos e testes são fictícios.

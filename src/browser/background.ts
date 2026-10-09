@@ -211,7 +211,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (previewAction && session.access !== 'read') throw new Error('Captura visual exige uma operação de leitura.');
     if (cmd.op === 'write' && session.access !== 'write') throw new Error('Esta operação permite apenas copiar. Gravação bloqueada.');
     const [existing] = await chrome.scripting.executeScript({target: {tabId: session.tabId}, world: 'MAIN', func: () => {
-      return (window as unknown as {YampiThemeSyncBridge?: {version?: string}}).YampiThemeSyncBridge?.version === '0.3.2';
+      return (window as unknown as {YampiThemeSyncBridge?: {version?: string}}).YampiThemeSyncBridge?.version === '0.3.3';
     }});
     if (!existing?.result) await chrome.scripting.executeScript({target: {tabId: session.tabId}, world: 'MAIN', files: ['bridge.js']});
     const results = await chrome.scripting.executeScript({target: {tabId: session.tabId}, world: 'MAIN', func: async command => {

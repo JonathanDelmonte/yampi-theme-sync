@@ -10,10 +10,12 @@ for (const name of extensionFiles) entries[name] = new Uint8Array(await readFile
 entries['INSTRUCOES.md'] = new Uint8Array(await readFile(path.join(root, 'docs/INSTALACAO.md')));
 entries['TERCEIROS.md'] = new Uint8Array(await readFile(path.join(root, 'docs/TERCEIROS.md')));
 const bytes = zipSync(entries, {level: 6});
-const out = path.join(root, 'releases');
+// Temporary distribution artifacts. The durable download is the GitHub release.
+// Installed unpacked folders are separate and must never be removed here.
+const out = path.join(root, '.cache', 'package');
 await mkdir(out, {recursive: true});
 const {version} = JSON.parse(await readFile(path.join(root, 'extension/manifest.json'), 'utf8'));
-const name = `yampi-theme-sync-${version}.zip`;
+const name = `yampi-code-sync-${version}.zip`;
 await writeFile(path.join(out, name), bytes);
 await writeFile(path.join(out, name + '.sha256'), createHash('sha256').update(bytes).digest('hex') + '  ' + name + '\n');
-console.log('Pacote pronto: releases/' + name);
+console.log('Pacote temporário pronto: .cache/package/' + name);

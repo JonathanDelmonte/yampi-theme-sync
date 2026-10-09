@@ -1,8 +1,10 @@
-# Yampi Theme Sync
+# Yampi Code Sync
 
 Extensão independente para copiar o código do editor Yampi, trabalhar no computador e devolver os textos escolhidos com comparação e backup. O repositório público contém somente a ferramenta e exemplos fictícios; projetos e dados de lojas ficam fora dele.
 
-## Versão 0.3.2
+## Versão 0.3.3
+
+Nome do repositório, pacote e pasta de desenvolvimento: **yampi-virtual-store-code-extractor-synchronizer**. No Chrome e no painel, o nome curto é **Yampi Code Sync**, desenvolvido por **Zirtuno**. O ícone usa a logo fornecida pelo proprietário; sua versão original está em `assets/yampi-code-sync-logo.png`. A descrição curta deixa a finalidade mais clara no cartão de extensões. O espaçamento desse cartão é controlado pelo Chrome.
 
 O painel preserva os tutoriais e as seções abertas, com bordas arredondadas, ações em azul petróleo e tons suaves derivados da marca Zirtuno. A assinatura discreta no cabeçalho abre seu Instagram somente ao clicar. Abas com sublinhado, confirmações visíveis e transições curtas orientam cada etapa; movimento reduzido e navegação por teclado continuam respeitados. [Proposta visual e nome técnico](docs/INTERFACE.md).
 
@@ -25,7 +27,7 @@ Quando há configuração declarativa compatível no editor, ela tem prioridade.
 
 ## Instalar e exportar
 
-Baixe em [Releases](https://github.com/JonathanDelmonte/yampi-theme-sync/releases), extraia o ZIP da extensão e carregue a pasta em `chrome://extensions`, com modo de desenvolvedor e **Carregar sem compactação**. Para atualizar, substitua os arquivos na mesma pasta instalada e recarregue o cartão. [Instruções completas](docs/INSTALACAO.md).
+Baixe em [Releases](https://github.com/JonathanDelmonte/yampi-virtual-store-code-extractor-synchronizer/releases), extraia o ZIP da extensão e carregue a pasta em `chrome://extensions`, com modo de desenvolvedor e **Carregar sem compactação**. Para atualizar, substitua os arquivos na mesma pasta instalada e recarregue o cartão. O ZIP pode ser apagado depois da extração; mantenha a pasta instalada enquanto a extensão estiver em uso. [Instruções completas](docs/INSTALACAO.md).
 
 1. Abra `https://app.yampi.com.br/store/code-editor/` e clique no ícone. O painel abre na própria aba, sem copiar automaticamente. Se estiver em outra tela, a extensão mostra **Abrir editor de código da Yampi**; use esse botão e clique novamente no ícone depois que o editor carregar.
 2. Confira a loja. Deixe **Incluir contexto visual da vitrine publicada** marcado e clique em **Confirmar e baixar ZIP**. O Chrome pede leitura da origem da vitrine. Negar permite copiar o código com prévia demonstrativa.
@@ -97,7 +99,7 @@ npm run test:preview
 npm run package
 ```
 
-`npm run dev` oferece a demonstração fictícia em `http://127.0.0.1:5181/demo.html?demo=1`. O pacote contém 16 arquivos permitidos e sai em `releases/yampi-theme-sync-0.3.2.zip`, com SHA-256. Ícones são gerados localmente; a logo original autorizada fica em `extension/brand/zirtuno-logo.png`. Chrome/Edge com `sidePanel` são necessários; outros navegadores não foram validados. O painel global fica desativado e cada aba exige clique no ícone. Vue 2 é usado por compatibilidade, fora de manutenção; use projetos confiáveis e mantenha o servidor em localhost.
+`npm run dev` oferece a demonstração fictícia em `http://127.0.0.1:5181/demo.html?demo=1`. O pacote contém 16 arquivos permitidos e sai temporariamente em `.cache/package/yampi-code-sync-0.3.3.zip`, com SHA-256. Esses dois arquivos podem ser removidos depois de confirmar o upload em Releases; a geração não acumula instaladores em `releases/`. Ícones são redimensionados localmente a partir da logo autorizada, preservando proporções e transparência. Sharp é uma dependência de desenvolvimento e não integra o pacote da extensão. A assinatura usa `extension/brand/zirtuno-logo.png`. Chrome/Edge com `sidePanel` são necessários; outros navegadores não foram validados. O painel global fica desativado e cada aba exige clique no ícone. Vue 2 é usado por compatibilidade, fora de manutenção; use projetos confiáveis e mantenha o servidor em localhost.
 
 Testes cobrem leitura integral, escrita somente fictícia, backup, conflitos, restauração, parser, privacidade e isolamento. Duas lojas fictícias, escura/clara, têm identidade, fontes, cores, produtos e rotas distintas. ZIPs são movidos e executados com acesso à loja bloqueado. Capturas independentes de referência são comparadas com a mesma home/estado/viewport após fontes/imagens carregarem. [Resultados e evidências](docs/VALIDACAO.md).
 
@@ -110,5 +112,7 @@ Sem telemetria. `activeTab`/`scripting` operam a aba escolhida; o editor é lido
 Originais e histórico ficam em IndexedDB local, separados por loja, sem criptografia adicional. ZIPs podem conter conteúdo privado. A extensão não envia projetos ao GitHub. Mantenha exports/backups fora deste repositório e revise qualquer publicação. [Licenças](docs/TERCEIROS.md).
 
 `src/core/preview.ts` define formato/allowlist; `src/browser/preview-capture.ts` faz captura estática; `public-fetch.ts` limita downloads. Worker/painel coordenam permissões. `local-runtime/` compila/serve a prévia; `scripts/update-project.mjs` atualiza ferramentas. [ROADMAP.md](docs/ROADMAP.md) mantém capacidades ainda não implementadas.
+
+O nome interno `yampi-theme-sync` permanece nos formatos de exportação e armazenamento para compatibilidade com projetos e históricos existentes. A autoria do manifesto não altera o nome público do editor na Chrome Web Store; esse campo pertence à conta de desenvolvedor. [Configuração da conta](docs/CHROME-WEB-STORE.md).
 
 Referências: [editor Yampi](https://docs.yampi.com.br/editor-codigo/intro), [MAIN/ISOLATED](https://developer.chrome.com/docs/extensions/develop/concepts/content-scripts), [cascata CSS](https://developer.mozilla.org/en-US/docs/Web/CSS/Guides/Cascade/Introduction), [painel lateral](https://developer.chrome.com/docs/extensions/reference/api/sidePanel).

@@ -1,6 +1,14 @@
-# Validação da versão 0.3.2
+# Validação da versão 0.3.3
 
 Execução em 09/10/2026, Windows, Node.js 24.15.0. Fixtures, imagens e fonte usadas nos testes são inteiramente fictícias. Nenhuma escrita real na Yampi foi realizada.
+
+## Identidade e distribuição na 0.3.3
+
+`npm ci`, `npm run check` e `npm run test:e2e` passaram: 139 testes em nove arquivos, seguidos do fluxo completo no painel lateral nativo de Chromium com editor fictício. A exportação continua exigindo confirmação e realizou zero edições, salvamentos ou acionamentos destrutivos. Importação, backup, envio fictício, reload, restauração protegida e captura visual fictícia também passaram. Nenhuma requisição alcançou uma loja real.
+
+O cartão nativo de `chrome://extensions` foi conferido em perfil Chromium temporário: nome **Yampi Code Sync**, versão 0.3.3, autoria **Zirtuno**, descrição curta e nova logo. O Chrome reserva a área da descrição e controla o espaço até o ID; a extensão não injeta estilos nessa página. Painéis de 280 e 360 pixels preservaram os textos e o link Zirtuno, sem transbordamento horizontal ou erros JavaScript. Evidências locais: `.cache/brand-033/report.json`, `chrome-card.png`, `panel-280.png` e `panel-360.png`.
+
+O pacote tem os mesmos 16 arquivos permitidos. As cinco dimensões de ícones são geradas a partir dos bytes da logo autorizada, com proporções e transparência preservadas; a imagem original e Sharp ficam somente no código de desenvolvimento. A geração usa `.cache/package/`, sem acumular ZIPs no diretório de instalações. O campo de autoria do manifesto não configura nem publica a conta da Chrome Web Store.
 
 ## Interface na 0.3.2
 
@@ -8,7 +16,7 @@ Execução em 09/10/2026, Windows, Node.js 24.15.0. Fixtures, imagens e fonte us
 
 A interface foi exercitada em 280, 320, 360, 480 e 800 pixels, incluindo orientação, download, importação, comparação, confirmação de envio, recuperação e erro de leitura. Não houve transbordamento horizontal da página. A logo local e o destino/atributos do link Zirtuno foram conferidos. A tabela tem rolagem própria e pode ser percorrida por teclado, com foco visível. Entrada de seção por ponteiro usa 180 ms; ativação por teclado e movimento reduzido não usam a animação. Nenhuma operação de escrita foi executada nessa conferência visual.
 
-Evidências locais ignoradas pelo Git: `.cache/panel-design/report.json`, capturas `guide-*.png`, `export-*.png`, `import-*.png`, `review-*.png`, `backup-*.png`, `error-*.png` e teste de conferência `.cache/panel-design-check.mjs`. As verificações da prévia local descritas abaixo foram realizadas na 0.3.0; seu runtime não foi alterado nas versões 0.3.1/0.3.2. Esses resultados são fictícios e não ampliam a validação real.
+Evidências locais ignoradas pelo Git: `.cache/panel-design/report.json`, capturas `guide-*.png`, `export-*.png`, `import-*.png`, `review-*.png`, `backup-*.png`, `error-*.png` e teste de conferência `.cache/panel-design-check.mjs`. As verificações da prévia local descritas abaixo foram realizadas na 0.3.0; seu runtime não foi alterado nas versões 0.3.1/0.3.2/0.3.3. Esses resultados são fictícios e não ampliam a validação real.
 
 ## Diagnóstico do incidente
 
@@ -55,7 +63,7 @@ Os testes de navegador usam Chromium instalado pelo Playwright. Portas de teste 
 
 ## Nova exportação e projetos existentes
 
-Recarregue a extensão 0.3.2 na mesma pasta instalada, feche o painel antigo e recarregue o editor sem rascunhos pendentes. Confira a loja e confirme a cópia com captura visual habilitada. Autorize somente as origens apresentadas; se negar, a extensão indica a prévia parcial/demonstrativa. Extraia em uma pasta nova e execute os quatro comandos de integridade, compilação, prévia e retorno descritos no README.
+Recarregue a extensão 0.3.3 na mesma pasta instalada, feche o painel antigo e recarregue o editor sem rascunhos pendentes. Confira a loja e confirme a cópia com captura visual habilitada. Autorize somente as origens apresentadas; se negar, a extensão indica a prévia parcial/demonstrativa. Extraia em uma pasta nova e execute os quatro comandos de integridade, compilação, prévia e retorno descritos no README.
 
 Para trocar apenas ferramentas antigas, use `node scripts/update-project.mjs "C:/projeto"` e depois `--apply`. Dry-run não escreve. Ferramentas modificadas pelo usuário e dependências diferentes são recusadas antes da gravação; scripts personalizados, dados, configuração, tema, baseline e manifesto são preservados. Backup/journal precedem a atualização, com rechecagem contra edições concorrentes. Uma atualização não inventa contexto ausente: uma nova captura separada é necessária para isso.
 
