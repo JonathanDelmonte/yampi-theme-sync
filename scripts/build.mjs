@@ -6,7 +6,7 @@ const root = path.resolve(import.meta.dirname, '..');
 const dist = path.join(root, 'dist');
 await mkdir(dist, {recursive: true});
 // Only these generated files are removed; never touch client files or exports.
-for (const name of ['background.js', 'bridge.js', 'panel.js', 'guide.js', 'fixture.js']) await rm(path.join(dist, name), {force: true});
+for (const name of ['background.js', 'bridge.js', 'panel.js', 'guide.js', 'zip-worker.js', 'fixture.js']) await rm(path.join(dist, name), {force: true});
 await cp(path.join(root, 'extension'), dist, {recursive: true});
 await writeIcons(dist);
 const raw = {name: 'raw', setup(builder) {
@@ -17,6 +17,7 @@ const common = {bundle: true, target: 'chrome120', sourcemap: false, minify: tru
 await build({...common, entryPoints: [path.join(root, 'src/browser/background.ts')], outfile: path.join(dist, 'background.js'), format: 'esm'});
 await build({...common, entryPoints: [path.join(root, 'src/browser/bridge.ts')], outfile: path.join(dist, 'bridge.js'), format: 'iife', globalName: 'YampiThemeSyncBridge'});
 await build({...common, entryPoints: [path.join(root, 'src/panel.ts')], outfile: path.join(dist, 'panel.js'), format: 'esm'});
+await build({...common, entryPoints: [path.join(root, 'src/browser/zip-worker.ts')], outfile: path.join(dist, 'zip-worker.js'), format: 'esm'});
 await build({...common, entryPoints: [path.join(root, 'src/guide.ts')], outfile: path.join(dist, 'guide.js'), format: 'esm'});
 await build({...common, entryPoints: [path.join(root, 'src/demo/fixture.ts')], outfile: path.join(dist, 'fixture.js'), format: 'esm'});
 const html = await readFile(path.join(root, 'extension/panel.html'), 'utf8');

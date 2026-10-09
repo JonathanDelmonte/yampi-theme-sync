@@ -2,6 +2,7 @@ import {preparePreview, finishPreview, type PreviewDraft, type PreviewFetch} fro
 import {demonstration, publicUrl, type PreviewBundle} from './core/preview';
 import {BrowserAdapter, type RPC} from './browser/adapter';
 import {PanelConnection} from './browser/panel-connection';
+import {zipInWorker} from './browser/zip-client';
 import {capture, applyPlan} from './core/workflow';
 import {encodeSnapshot, decodeProject, readProjectDirectory} from './core/archive';
 import {makePlan} from './core/planner';
@@ -216,13 +217,15 @@ function requestScopes(origins:string[]):Promise<boolean> {
   return chrome.permissions.request({origins:origins.map(origin=>publicUrl(origin,origin).replace(/\/$/,'')+'/*')}).catch(()=>false);
 }
 function remoteFetch(snapshot:Snapshot):PreviewFetch {
-  return async url=>{if(controller?.signal.aborted)throw new Error('Cancelado.');assertContext(snapshot.context,await adapter.context());
+  // The authenticated worker checks the same context before AND after every GET.
+  return async url=>{if(controller?.signal.aborted)throw new Error('Cancelado.');
     const reply=await rpc({action:'preview-fetch',preview:{url,context:snapshot.context}}) as {encoded:string;type:string;url:string};
     return {bytes:Uint8Array.from(atob(reply.encoded),c=>c.charCodeAt(0)),type:reply.type,url:reply.url};};
 }
 async function deliverProject(snapshot:Snapshot,visual:PreviewBundle):Promise<void> {
   assertContext(snapshot.context,await adapter.context());
-  const bytes=await encodeSnapshot(snapshot,true,visual);
+  status('Preparando ZIP…','Compactação local em segundo plano. O código e as imagens originais são preservados.');
+  const bytes=await encodeSnapshot(snapshot,true,visual,{signal:controller?.signal,compress:zipInWorker});
   await put(`baseline:${await contextKey(snapshot.context)}`,snapshot);
   await download(bytes,fileName('exportacao',snapshot.context.storeName));
   setBaseline(snapshot);pendingPreview=undefined;
@@ -232,7 +235,7 @@ async function deliverProject(snapshot:Snapshot,visual:PreviewBundle):Promise<vo
 }
 async function completeVisual(snapshot:Snapshot,draft:PreviewDraft,origins:string[]):Promise<void> {
   await rpc({action:'preview-allow',preview:{origins,context:snapshot.context}});
-  const bundle=await finishPreview(draft,remoteFetch(snapshot),origins,controller?.signal);
+  const bundle=await finishPreview(draft,remoteFetch(snapshot),origins,controller?.signal,(done,total)=>progress({done,total,path:'Imagens, fontes e estilos',phase:'Baixando recursos visuais'}));
   const missing=[...new Set(bundle.issues.filter(i=>i.code==='asset-unavailable'&&i.reason==='Origem não autorizada para leitura.'&&i.resource).map(i=>new URL(i.resource!).origin))];
   if(missing.length) {
     pendingPreview={snapshot,draft,bundle,origins};
@@ -257,8 +260,6 @@ $('preview-allow').addEventListener('click',()=>{const pending=pendingPreview;if
   const permission=requestScopes(missing);
   void run(async()=>{if(!await permission){status('Permissão não concedida','Você pode baixar com a prévia parcial.');return;}
     const origins=[...new Set([...pending.origins,...missing])];
-    pending.draft.bundle.issues=pending.draft.bundle.issues.filter(i=>i.code!=='asset-unavailable');
-    pending.draft.bundle.assets={};pending.draft.bundle.resources=[];pending.draft.bundle.styles=[];
     await completeVisual(pending.snapshot,pending.draft,origins);});
 });
 $('preview-partial').addEventListener('click',()=>{const pending=pendingPreview;if(pending)void run(()=>deliverProject(pending.snapshot,pending.bundle));});

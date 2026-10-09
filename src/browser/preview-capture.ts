@@ -67,7 +67,7 @@ export function resourceReferences(html: Document, data: Data, base: string,issu
   }
   return [...urls];
 }
-export interface PreviewDraft {bundle:PreviewBundle; urls:string[]; documents:Map<string,Document>}
+export interface PreviewDraft {bundle:PreviewBundle; urls:string[]; documents:Map<string,Document>; cache?:Map<string,FetchResult>}
 export async function preparePreview(snapshot:Snapshot, fetcher:PreviewFetch, options:{limits?:Partial<PreviewLimits>;editorData?:Data;enabled?:boolean;signal?:AbortSignal}={}):Promise<PreviewDraft> {
   const bundle=demonstration(snapshot.context,options.enabled===false?'Captura visual desativada ou sem permissão.':'A vitrine não expõe contexto estático compatível.');
   bundle.limits=previewLimits(options.limits);const docs=new Map<string,Document>(), urls=new Set<string>();
@@ -129,24 +129,39 @@ function rewrite(value:Json,map:Map<string,string>,base:string):Json {
   if(Array.isArray(value))return value.map(v=>rewrite(v,map,base));
   if(value&&typeof value==='object')return Object.fromEntries(Object.entries(value).map(([k,v])=>[k,rewrite(v,map,base)]));return value;
 }
-export async function finishPreview(draft:PreviewDraft,fetcher:PreviewFetch,allowedOrigins:string[],signal?:AbortSignal):Promise<PreviewBundle> {
-  const {bundle}=draft,queue=[...draft.urls],seen=new Set<string>(),map=new Map<string,string>();let total=0;
+export async function finishPreview(draft:PreviewDraft,fetcher:PreviewFetch,allowedOrigins:string[],signal?:AbortSignal,onProgress?:(done:number,total:number)=>void):Promise<PreviewBundle> {
+  const check=()=>{if(signal?.aborted)throw new Error('Captura de recursos cancelada.');};check();
+  // Keep the original public URLs/data intact for a later permission round.
+  // The successful-response cache belongs only to this draft, never to another export/store.
+  const bundle=structuredClone(draft.bundle),queue=[...draft.urls],seen=new Set<string>(),map=new Map<string,string>();let total=0,done=0;
+  const cache=draft.cache ||= new Map<string,FetchResult>();
   // CSS is fetched first to discover font/icon dependencies. Each additional origin
   // still needs explicit permission; missing origins produce a partial report.
   queue.sort((a,b)=>Number(/\.css(?:\?|$)/.test(b))-Number(/\.css(?:\?|$)/.test(a)));
   while(queue.length) {
-    if(signal?.aborted)throw new Error('Captura de recursos cancelada.');
-    const url=queue.shift()!;if(seen.has(url))continue;seen.add(url);
-    if(seen.size>bundle.limits.resources){bundle.issues.push({code:'resource-limit',reason:`Recorte de ${bundle.limits.resources} recursos atingido.`});break;}
-    try {
-      if(!allowedOrigins.includes(new URL(url).origin))throw new Error('Origem não autorizada para leitura.');
-      const response=await fetcher(url),bytes=response.bytes;
-      if(response.url!==url)throw new Error('Redirecionamento rejeitado.');if(!bytes.length||bytes.length>bundle.limits.resourceBytes||(total+bytes.length)>bundle.limits.totalBytes)throw new Error('Recurso ultrapassa os limites de tamanho.');
+    check();
+    const batch:string[]=[];
+    while(queue.length&&batch.length<4&&seen.size<bundle.limits.resources){const url=queue.shift()!;if(seen.has(url))continue;seen.add(url);batch.push(url);}
+    if(!batch.length){if(queue.some(url=>!seen.has(url)))bundle.issues.push({code:'resource-limit',reason:`Recorte de ${bundle.limits.resources} recursos atingido.`});break;}
+    // Only public resources run concurrently. Editor navigation/reads remain sequential.
+    // Await every issued request before cancellation can release the read lock.
+    const results=await Promise.all(batch.map(async url=>{
+      try {if(!allowedOrigins.includes(new URL(url).origin))throw new Error('Origem não autorizada para leitura.');return {response:cache.get(url)||await fetcher(url)};}
+      catch(error){return {error};}
+    }));
+    check();
+    for(let i=0;i<batch.length;i++){check();const url=batch[i];try {
+      const result=results[i];if('error' in result)throw result.error;
+      const response=result.response!,bytes=response.bytes;
+      if(response.url!==url)throw new Error('Redirecionamento rejeitado.');if(!bytes.length||bytes.length>bundle.limits.resourceBytes)throw new Error('Recurso ultrapassa os limites de tamanho.');
       const ext=previewType(bytes,response.type),sha=await hashBytes(bytes),file='assets/'+sha+'.'+ext;
+      if(!bundle.assets[file]&&(total+bytes.length)>bundle.limits.totalBytes)throw new Error('Recurso ultrapassa os limites de tamanho.');
       if(!bundle.assets[file]){bundle.assets[file]=bytes;total+=bytes.length;}
       bundle.resources.push({url,path:file,type:response.type,bytes:bytes.length,sha256:sha});map.set(url,'/preview/'+file);
+      cache.set(url,{...response,bytes:bundle.assets[file]});
       if(ext==='css') {const css=new TextDecoder().decode(bytes),refs=new Set<string>();references(css,url,refs,bundle.issues);queue.push(...refs);}
     }catch(e){bundle.issues.push({code:'asset-unavailable',resource:url,reason:(e as Error).message});}
+    onProgress?.(++done,Math.min(bundle.limits.resources,seen.size+queue.length));}
   }
   // Rewrite CSS after all fonts/images are collected. Its final hash records the
   // portable bytes rather than the pre-rewrite network response.
@@ -174,6 +189,7 @@ export async function finishPreview(draft:PreviewDraft,fetcher:PreviewFetch,allo
   // and parent imports must point at those final portable bytes.
   for(const url of cssItems.keys())await resolveCSS(url,new Set());
   for(const file of Object.keys(bundle.assets))if(!bundle.resources.some(r=>r.path===file))delete bundle.assets[file];
+  check();
   bundle.data=rewrite(bundle.data,map,bundle.source.origin) as Data;
   bundle.pages=bundle.pages.map(page=>({...page,data:rewrite(page.data,map,page.sourceUrl) as Data}));
   const routes=new Map(bundle.pages.map(p=>[p.sourceUrl,`/preview?page=${p.kind}&capture=${p.id}`]));

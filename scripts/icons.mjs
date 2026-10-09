@@ -10,4 +10,10 @@ export async function writeIcons(dist) {
   for(const size of iconSizes) await sharp(source)
     .resize(size,size,{fit:'contain',background:{r:0,g:0,b:0,alpha:0}})
     .png().toFile(path.join(directory,`icon${size}.png`));
+  const brand=path.join(dist,'brand');await mkdir(brand,{recursive:true});
+  // A 72px rendition is sufficient for the 18px signature at 4x density.
+  // Preserve the original in assets; only the small rendition is distributed.
+  await sharp(path.resolve(import.meta.dirname,'../assets/zirtuno-logo-source.png'))
+    .resize(72,72,{fit:'inside',withoutEnlargement:true}).png()
+    .toFile(path.join(brand,'zirtuno-logo.png'));
 }

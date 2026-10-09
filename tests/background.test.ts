@@ -53,6 +53,7 @@ beforeEach(async () => {
     scripting: {executeScript: vi.fn(async (request: {target: {tabId: number}; files?: string[]; args?: unknown[]}) => {
       if (request.files) {injected.add(request.target.tabId); return [{result: null}];}
       if (!request.args) return [{result: injected.has(request.target.tabId)}];
+      if (!injected.has(request.target.tabId)) return [{result:{needsBridge:true}}];
       return [{result: {ok: true, value: ['templates/home.twig']}}];})}
   } as unknown as typeof chrome;
   vi.stubGlobal('chrome', chromeMock); await import('../src/browser/background');
@@ -237,6 +238,10 @@ describe('painel lateral, permissões e isolamento do editor', () => {
     const token = await open(); await message(token, {action: 'lock'});
     await message(token, {command: {op: 'inventory'}}); await message(token, {command: {op: 'inventory'}});
     expect(vi.mocked(chromeMock.scripting.executeScript).mock.calls.filter(([r]) => 'files' in r)).toHaveLength(1);
+    expect(chromeMock.scripting.executeScript).toHaveBeenCalledTimes(4);
+    injected.delete(1); // A reload destroys the previously injected bridge.
+    await message(token,{command:{op:'inventory'}});
+    expect(vi.mocked(chromeMock.scripting.executeScript).mock.calls.filter(([r])=>'files' in r)).toHaveLength(2);
   });
   test('fechar painel espera a gravação pendente antes de liberar a sessão', async () => {
     const token = await open(); const close = port(token); await message(token, {action: 'lock', access: 'write'});

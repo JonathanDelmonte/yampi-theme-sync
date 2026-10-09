@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Yampi Code Sync",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "author": "Zirtuno",
   "minimum_chrome_version": "120",
   "description": "Baixe e sincronize o código da sua loja Yampi.",

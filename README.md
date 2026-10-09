@@ -2,7 +2,9 @@
 
 Extensão independente para copiar o código do editor Yampi, trabalhar no computador e devolver os textos escolhidos com comparação e backup. O repositório público contém somente a ferramenta e exemplos fictícios; projetos e dados de lojas ficam fora dele.
 
-## Versão 0.3.3
+## Versão 0.3.4
+
+A cópia usa uma única chamada ao adaptador por comando após a conexão. Imagens, fontes e estilos públicos são baixados em até quatro requisições simultâneas, com reaproveitamento das respostas válidas dentro da mesma exportação quando outra origem exige autorização. A compactação ocorre em um worker local, mantendo o painel responsivo. PNG/JPEG/WebP/WOFF2 preservam seus bytes no ZIP, sem uma segunda compressão desnecessária. A navegação pelos arquivos do editor permanece sequencial, com as mesmas verificações de estabilidade e integridade. [Auditoria e medições reproduzíveis](docs/AUDITORIA.md).
 
 Nome do repositório, pacote e pasta de desenvolvimento: **yampi-virtual-store-code-extractor-synchronizer**. No Chrome e no painel, o nome curto é **Yampi Code Sync**, desenvolvido por **Zirtuno**. O ícone usa a logo fornecida pelo proprietário; sua versão original está em `assets/yampi-code-sync-logo.png`. A descrição curta deixa a finalidade mais clara no cartão de extensões. O espaçamento desse cartão é controlado pelo Chrome.
 
@@ -96,10 +98,12 @@ npm ci
 npm run check
 npm run test:e2e
 npm run test:preview
+npm run test:compression
+npm run audit:performance
 npm run package
 ```
 
-`npm run dev` oferece a demonstração fictícia em `http://127.0.0.1:5181/demo.html?demo=1`. O pacote contém 16 arquivos permitidos e sai temporariamente em `.cache/package/yampi-code-sync-0.3.3.zip`, com SHA-256. Esses dois arquivos podem ser removidos depois de confirmar o upload em Releases; a geração não acumula instaladores em `releases/`. Ícones são redimensionados localmente a partir da logo autorizada, preservando proporções e transparência. Sharp é uma dependência de desenvolvimento e não integra o pacote da extensão. A assinatura usa `extension/brand/zirtuno-logo.png`. Chrome/Edge com `sidePanel` são necessários; outros navegadores não foram validados. O painel global fica desativado e cada aba exige clique no ícone. Vue 2 é usado por compatibilidade, fora de manutenção; use projetos confiáveis e mantenha o servidor em localhost.
+`npm run dev` oferece a demonstração fictícia em `http://127.0.0.1:5181/demo.html?demo=1`. O pacote contém 17 arquivos permitidos e sai temporariamente em `.cache/package/yampi-code-sync-0.3.4.zip`, com SHA-256. Esses dois arquivos podem ser removidos depois de confirmar o upload em Releases; a geração não acumula instaladores em `releases/`. Ícones são redimensionados localmente a partir da logo autorizada, preservando proporções e transparência. Sharp é uma dependência de desenvolvimento e não integra o pacote da extensão. A assinatura exibida em 18 px usa uma versão de 72×72 px gerada de `assets/zirtuno-logo-source.png`; a imagem original permanece somente no código de desenvolvimento. Chrome/Edge com `sidePanel` são necessários; outros navegadores não foram validados. O painel global fica desativado e cada aba exige clique no ícone. Vue 2 é usado por compatibilidade, fora de manutenção; use projetos confiáveis e mantenha o servidor em localhost.
 
 Testes cobrem leitura integral, escrita somente fictícia, backup, conflitos, restauração, parser, privacidade e isolamento. Duas lojas fictícias, escura/clara, têm identidade, fontes, cores, produtos e rotas distintas. ZIPs são movidos e executados com acesso à loja bloqueado. Capturas independentes de referência são comparadas com a mesma home/estado/viewport após fontes/imagens carregarem. [Resultados e evidências](docs/VALIDACAO.md).
 

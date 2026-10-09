@@ -1,15 +1,18 @@
-import {zipSync, unzipSync, strToU8} from 'fflate';
+import {unzipSync, strToU8} from 'fflate';
+import {compressArchive,type ArchiveEntries} from './compression';
 import {MAX_FILES, MAX_TOTAL_BYTES, MAX_FILE_BYTES, ROOTS, safeFiles, safeSnapshot, hashBytes, imagePath, validateContext, validatePath, type Snapshot, type Manifest, type Files, type Assets} from './model';
 import {previewEntries, demonstration, type PreviewBundle} from './preview';
 import {localKit} from './local-kit';
 const metaPath = '.yampi-sync/manifest.json';
 export interface Project {baseline: Snapshot; local: Files; localAssets: Assets}
-export async function encodeSnapshot(snapshot: Snapshot, project = false, preview?: PreviewBundle): Promise<Uint8Array> {
+export async function encodeSnapshot(snapshot: Snapshot, project = false, preview?: PreviewBundle,options:{signal?:AbortSignal;compress?:(entries:ArchiveEntries,signal?:AbortSignal)=>Promise<Uint8Array>}={}): Promise<Uint8Array> {
+  const check=()=>{if(options.signal?.aborted)throw new Error('Preparação do ZIP cancelada. Nenhum arquivo da Yampi foi alterado.');};check();
   const source = safeSnapshot(snapshot);
   const manifest: Manifest = {format: 'yampi-theme-sync', version: 2, context: source.context, capturedAt: source.capturedAt, files: []};
   const entries: Record<string, Uint8Array> = Object.create(null);
   const all = {...Object.fromEntries(Object.entries(source.files).map(([p, v]) => [p, strToU8(v)])), ...source.assets};
   for (const path of Object.keys(all).sort()) {
+    check();
     const bytes = all[path];
     entries[`tema/${path}`] = bytes;
     entries[`.yampi-sync/baseline/${path}`] = bytes;
@@ -21,7 +24,8 @@ export async function encodeSnapshot(snapshot: Snapshot, project = false, previe
     for (const [path,value] of Object.entries(localKit(Object.keys(source.files),source.context.storeName,visual))) entries[path]=strToU8(value);
     Object.assign(entries,await previewEntries(visual));
   }
-  return zipSync(entries, {level: 6});
+  check();
+  return options.compress?options.compress(entries,options.signal):compressArchive(entries);
 }
 function safeArchivePath(path: string): void {
   if (!path || path.length > 500 || /[\\\u0000-\u001f\u007f:<>"|?*]/.test(path) || path.startsWith('/') || path.split('/').some(p => p === '..' || p === '.')) throw new Error(`Caminho inseguro no ZIP: ${path}`);

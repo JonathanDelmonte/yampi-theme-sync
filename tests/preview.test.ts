@@ -49,7 +49,7 @@ describe('contexto visual portátil separado do código',()=>{
     const result=await finishPreview({bundle,urls:['https://cdn.invalid/a.svg','https://cdn.invalid/b.svg','https://other.invalid/a.svg'],documents:new Map()},async url=>{if(url.endsWith('a.svg'))return {bytes:utf8('<svg/>'),type:'image/svg+xml',url:url+'/redirect'};throw new Error('timeout explícito');},['https://cdn.invalid']);
     expect(result.issues).toHaveLength(3);expect(result.resources).toHaveLength(0);expect(result.issues.map(i=>i.reason).join()).toMatch(/Redirecionamento/);expect(result.issues.map(i=>i.reason).join()).toMatch(/autorizada/);
     const clipped=demonstration(demoSnapshot.context,'Teste');clipped.issues=[];clipped.limits.resources=1;
-    await finishPreview({bundle:clipped,urls:['https://cdn.invalid/a.svg','https://cdn.invalid/b.svg'],documents:new Map()},async url=>({bytes:utf8('<svg/>'),type:'image/svg+xml',url}),['https://cdn.invalid']);expect(clipped.issues.some(i=>i.code==='resource-limit')).toBe(true);
+    const limited=await finishPreview({bundle:clipped,urls:['https://cdn.invalid/a.svg','https://cdn.invalid/b.svg'],documents:new Map()},async url=>({bytes:utf8('<svg/>'),type:'image/svg+xml',url}),['https://cdn.invalid']);expect(limited.issues.some(i=>i.code==='resource-limit')).toBe(true);
   });
   test('download público é somente GET sem credenciais; streaming não é truncado',async()=>{
     const fetcher=vi.fn(async()=>new Response('<svg/>',{headers:{'content-type':'image/svg+xml'}}));
@@ -66,10 +66,10 @@ describe('contexto visual portátil separado do código',()=>{
       'https://cdn.invalid/b.css':{bytes:utf8('@font-face{font-family:Demo;src:url(https://cdn.invalid/font.woff2)}'),type:'text/css'},
       'https://cdn.invalid/font.woff2':{bytes:utf8('wOF2-fictional'),type:'font/woff2'}
     };
-    await finishPreview({bundle,urls:['https://cdn.invalid/a.css'],documents:new Map()},async url=>({...resources[url],url}),['https://cdn.invalid']);
-    const a=bundle.resources.find(r=>r.url.endsWith('/a.css'))!,b=bundle.resources.find(r=>r.url.endsWith('/b.css'))!;
-    expect(new TextDecoder().decode(bundle.assets[a.path])).toContain('/preview/'+b.path);expect(bundle.issues).toHaveLength(0);await expect(previewEntries(bundle)).resolves.toBeDefined();
-    expect(new TextDecoder().decode(bundle.assets[b.path])).not.toContain('placeholder');expect(new TextDecoder().decode(bundle.assets[b.path])).toContain('/preview/assets/');
+    const captured=await finishPreview({bundle,urls:['https://cdn.invalid/a.css'],documents:new Map()},async url=>({...resources[url],url}),['https://cdn.invalid']);
+    const a=captured.resources.find(r=>r.url.endsWith('/a.css'))!,b=captured.resources.find(r=>r.url.endsWith('/b.css'))!;
+    expect(new TextDecoder().decode(captured.assets[a.path])).toContain('/preview/'+b.path);expect(captured.issues).toHaveLength(0);await expect(previewEntries(captured)).resolves.toBeDefined();
+    expect(new TextDecoder().decode(captured.assets[b.path])).not.toContain('placeholder');expect(new TextDecoder().decode(captured.assets[b.path])).toContain('/preview/assets/');
     const result=rewriteCSS('@import "/preview/'+b.path+'";',{});expect(result).toContain('@import');expect(result).toContain('/preview/'+b.path);
     const colors=demonstration(demoSnapshot.context,'Teste');colors.data={pageConfig:{theme:{params:{color_primary:'#123456'}}}};colors.pages=[{id:'page-0',kind:'home',sourceUrl:demoSnapshot.context.previewOrigin+'/',data:colors.data}];
     await finishPreview({bundle:colors,urls:[],documents:new Map()},async()=>{throw new Error('Não deve ler');},[]);expect((colors.data.pageConfig as any).theme.params.color_primary).toBe('#123456');

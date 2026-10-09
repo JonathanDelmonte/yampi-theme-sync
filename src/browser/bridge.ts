@@ -3,7 +3,7 @@ import type {EditorView} from '@codemirror/view';
 import {editorView, readDocument} from './editor-document';
 import {assertContext, validatePath, validatePaths, validateImage, imagePath, writable, MAX_FILE_BYTES, type Context} from '../core/model';
 export interface Command {op: 'context' | 'inventory' | 'read' | 'readAsset' | 'visual' | 'write'; context?: Context; path?: string; expected?: string; content?: string}
-export const version = '0.3.3';
+export const version = '0.3.4';
 type Reply = {ok: true; value: unknown} | {ok: false; error: string};
 const clean = (e: Element | null) => e?.textContent?.trim() || '';
 type EditorRoot = ShadowRoot | HTMLElement;
@@ -69,10 +69,10 @@ function pathFor(file: Element): string {
   return path.startsWith('logs/') ? path : validatePath(path);
 }
 function inventory(): Map<string, HTMLElement> {
-  const nodes = [...root().querySelectorAll<HTMLElement>('aside .file-name')].filter(n => !pathFor(n).startsWith('logs/'));
-  const paths = nodes.map(pathFor);
+  const entries=[...root().querySelectorAll<HTMLElement>('aside .file-name')].map(node=>[pathFor(node),node] as const).filter(([path])=>!path.startsWith('logs/'));
+  const paths = entries.map(([path])=>path);
   validatePaths(paths);
-  return new Map(paths.map((path, i) => [path, nodes[i]]));
+  return new Map(entries);
 }
 async function completeInventory(context: Context): Promise<string[]> {
   let opened = 0;
@@ -124,10 +124,15 @@ function selectedPath(): string | undefined {
   const selected = root().querySelectorAll('aside .collapse-item.selected .file-name');
   return selected.length === 1 ? pathFor(selected[0]) : undefined;
 }
-async function open(path: string, context: Context): Promise<void> {
+async function open(path: string, context: Context, reading=false): Promise<void> {
   guard(context);
   assertClean();
-  const item = inventory().get(validatePath(path));
+  validatePath(path);
+  // Full inventories are still checked before/after capture and on every write.
+  // A read only resolves matching names, including their complete directory path.
+  const candidates=reading?[...root().querySelectorAll<HTMLElement>('aside .file-name')].filter(n=>clean(n)===path.split('/').pop()&&pathFor(n)===path):[];
+  if(candidates.length>1)throw new Error('O arquivo tem caminhos duplicados na árvore. Operação interrompida.');
+  const item = reading?candidates[0]:inventory().get(path);
   if (!item) throw new Error(`O arquivo não existe na loja: ${path}. A extensão não cria duplicatas.`);
   const parents: HTMLElement[] = [];
   for (let n = item.parentElement; n && n.tagName !== 'ASIDE'; n = n.parentElement) if (n.classList.contains('collapse-list')) parents.unshift(n);
@@ -144,11 +149,13 @@ async function open(path: string, context: Context): Promise<void> {
     return selectedPath() === path && clean(root().querySelector('main .tab-item.active p')) === path.split('/').pop() && (imagePath(path) ? !!image?.complete && !!image.naturalWidth : !!root().querySelector('main .cm-content'));
   });
   // CodeMirror and the active tab can switch before async file loading finishes. Require stable UI/document.
-  let last = '', stable = 0;
+  let last: unknown, stable = 0;
   await until(() => {
     guard(context);
     if (selectedPath() !== path || root().querySelector('main [aria-busy="true"], main .loading, main .spinner, main .loader-bg')) {stable = 0; return false;}
-    const value = imagePath(path) ? visibleImage().src : readDocument(view());
+    // CodeMirror Text is immutable: a new document resets the same stability window.
+    // Copy/validate the full text once after stabilization, rather than on each poll.
+    const value = imagePath(path) ? visibleImage().src : view().state.doc;
     stable = value === last ? stable + 1 : 0;
     last = value;
     return stable >= 4;
@@ -206,7 +213,7 @@ export async function command(input: Command): Promise<Reply> {
     }
     if (input.op === 'inventory') return {ok: true, value: await completeInventory(context)};
     if (!input.path) throw new Error('Arquivo não informado.');
-    await open(input.path, context);
+    await open(input.path, context,input.op==='read'||input.op==='readAsset');
     if (input.op === 'readAsset' && imagePath(input.path)) return {ok: true, value: await readImage(input.path, context)};
     if (imagePath(input.path)) throw new Error('Imagens são exportadas para uso local; envio binário está bloqueado.');
     const editor = view();

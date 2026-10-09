@@ -10,6 +10,8 @@ Virtual store identifica a loja virtual; code identifica os arquivos do editor; 
 
 A versão 0.3.3 usa a logo Y/código fornecida pelo proprietário, redimensionada com proporções e transparência preservadas. A pequena assinatura Zirtuno continua no cabeçalho. O Chrome controla a composição e o espaço entre descrição e ID na sua página de extensões; a descrição foi reduzida para uma frase curta, sem HTML ou artifícios de quebra de linha.
 
+Na 0.3.4, a assinatura de 18 px usa uma imagem local de 72×72 px. O original autorizado permanece em `assets/zirtuno-logo-source.png`, fora do instalador. O painel mostra o progresso dos recursos visuais e da preparação do ZIP; a compactação em segundo plano mantém a interação disponível, inclusive o cancelamento.
+
 ## Direção aplicada na 0.3.2
 
 Uma ferramenta de trabalho compacta, com fundo quase branco, texto escuro e azul petróleo nas ações. A paleta deriva do ciano da Zirtuno, com saturação reduzida para leitura confortável. A logo original autorizada aparece em 18 px, na mesma linha de **Desenvolvido por Zirtuno**; o conjunto abre `https://www.instagram.com/zirtuno/` por clique. Não carrega fontes ou imagens remotas. A loja permanece no cabeçalho durante toda a operação.

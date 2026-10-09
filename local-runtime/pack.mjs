@@ -8,7 +8,9 @@ export async function packProject(root) {
   entries['.yampi-sync/manifest.json'] = strToU8(JSON.stringify(manifest, null, 2));
   for (const [name, value] of Object.entries(baseline)) entries['.yampi-sync/baseline/' + name] = value;
   for (const [name, value] of Object.entries(files)) entries['tema/' + name] = value;
-  return zipSync(entries, {level: 6});
+  // Lossless ZIP STORE avoids recompressing PNG/JPEG/WebP; originals stay intact.
+  const input=Object.fromEntries(Object.entries(entries).map(([name,bytes])=>[name,/\.(?:png|jpe?g|webp|woff2)$/i.test(name)?[bytes,{level:0}]:bytes]));
+  return zipSync(input, {level: 6});
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(import.meta.filename)) {
   try {

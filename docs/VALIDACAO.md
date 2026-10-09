@@ -1,12 +1,24 @@
-# Validação da versão 0.3.3
+# Validação da versão 0.3.4
 
 Execução em 09/10/2026, Windows, Node.js 24.15.0. Fixtures, imagens e fonte usadas nos testes são inteiramente fictícias. Nenhuma escrita real na Yampi foi realizada.
+
+## Desempenho e integridade na 0.3.4
+
+`npm run check` passou com 145 testes em dez arquivos. Os seis casos novos verificam concorrência limitada a quatro recursos públicos, ordem e orçamento determinísticos, reaproveitamento somente na mesma exportação e com autorização, nova tentativa após falha, cancelamento sem requisições pendentes e ZIP com imagens intactas. A integração do adaptador verifica uma chamada por comando já conectado e reinjeção após reload.
+
+`npm run test:e2e` e `npm run test:preview` foram repetidos nesta versão e passaram nos cenários fictícios descritos abaixo. A exportação pelo painel lateral nativo executou o worker de compactação distribuído. Importação, baseline, backup, envio fictício, reload, restauração protegida e prévia portátil continuaram funcionando. Durante a cópia, os contadores registraram zero edições, salvamentos, exclusões, criações, renomeações ou publicações. Nenhuma requisição alcançou uma loja real.
+
+`npm run test:compression` passou com worker real em Chromium temporário: 5.575.444 bytes de entrada, conteúdo do ZIP igual às entradas originais, buffers preservados, cancelamento sem erro não tratado e workers encerrados. O timer do painel avançou 11 vezes durante a compactação, confirmando que ela saiu da thread da interface. O worker tem custo de inicialização; o teste não presume menor tempo total para qualquer tamanho de pacote.
+
+A auditoria comparou o código da 0.3.3 e a 0.3.4 com as mesmas fixtures e três amostras por etapa. A mediana da preparação do ZIP caiu de 277,78 para 128,73 ms; a captura de 24 recursos com latência simulada de 25 ms caiu de 611,29 para 156,14 ms. Os 250 textos e quatro PNGs foram conferidos byte a byte após reimportação. São medições sintéticas de etapas, sem estimativa da duração total em uma loja real. [Método e comandos](AUDITORIA.md).
+
+O pacote agora permite 17 arquivos, incluindo `zip-worker.js`. O instalador passa de 1.056.798 para 145.130 bytes (86% menor). A assinatura passa de 1.158.905 para 2.174 bytes, com o original preservado no código de desenvolvimento. Permissões e CSP permanecem iguais. Evidências locais atuais: `.cache/performance/baseline/report.json`, `.cache/performance/optimized/report.json`, `.cache/performance/worker/report.json` e `.cache/visual-validation/report.json`.
 
 ## Identidade e distribuição na 0.3.3
 
 `npm ci`, `npm run check` e `npm run test:e2e` passaram: 139 testes em nove arquivos, seguidos do fluxo completo no painel lateral nativo de Chromium com editor fictício. A exportação continua exigindo confirmação e realizou zero edições, salvamentos ou acionamentos destrutivos. Importação, backup, envio fictício, reload, restauração protegida e captura visual fictícia também passaram. Nenhuma requisição alcançou uma loja real.
 
-O cartão nativo de `chrome://extensions` foi conferido em perfil Chromium temporário: nome **Yampi Code Sync**, versão 0.3.3, autoria **Zirtuno**, descrição curta e nova logo. O Chrome reserva a área da descrição e controla o espaço até o ID; a extensão não injeta estilos nessa página. Painéis de 280 e 360 pixels preservaram os textos e o link Zirtuno, sem transbordamento horizontal ou erros JavaScript. Evidências locais: `.cache/brand-033/report.json`, `chrome-card.png`, `panel-280.png` e `panel-360.png`.
+O cartão nativo de `chrome://extensions` foi conferido em perfil Chromium temporário: nome **Yampi Code Sync**, versão 0.3.3, autoria **Zirtuno**, descrição curta e nova logo. O Chrome reserva a área da descrição e controla o espaço até o ID; a extensão não injeta estilos nessa página. Painéis de 280 e 360 pixels preservaram os textos e o link Zirtuno, sem transbordamento horizontal ou erros JavaScript. O relatório histórico permanece em `.cache/brand-033/report.json`; suas três capturas antigas foram removidas na limpeza da 0.3.4.
 
 O pacote tem os mesmos 16 arquivos permitidos. As cinco dimensões de ícones são geradas a partir dos bytes da logo autorizada, com proporções e transparência preservadas; a imagem original e Sharp ficam somente no código de desenvolvimento. A geração usa `.cache/package/`, sem acumular ZIPs no diretório de instalações. O campo de autoria do manifesto não configura nem publica a conta da Chrome Web Store.
 
@@ -16,7 +28,7 @@ O pacote tem os mesmos 16 arquivos permitidos. As cinco dimensões de ícones s�
 
 A interface foi exercitada em 280, 320, 360, 480 e 800 pixels, incluindo orientação, download, importação, comparação, confirmação de envio, recuperação e erro de leitura. Não houve transbordamento horizontal da página. A logo local e o destino/atributos do link Zirtuno foram conferidos. A tabela tem rolagem própria e pode ser percorrida por teclado, com foco visível. Entrada de seção por ponteiro usa 180 ms; ativação por teclado e movimento reduzido não usam a animação. Nenhuma operação de escrita foi executada nessa conferência visual.
 
-Evidências locais ignoradas pelo Git: `.cache/panel-design/report.json`, capturas `guide-*.png`, `export-*.png`, `import-*.png`, `review-*.png`, `backup-*.png`, `error-*.png` e teste de conferência `.cache/panel-design-check.mjs`. As verificações da prévia local descritas abaixo foram realizadas na 0.3.0; seu runtime não foi alterado nas versões 0.3.1/0.3.2/0.3.3. Esses resultados são fictícios e não ampliam a validação real.
+O relatório histórico ignorado pelo Git permanece em `.cache/panel-design/report.json`, junto do teste de conferência `.cache/panel-design-check.mjs`. As 30 capturas antigas dessa matriz foram removidas na limpeza da 0.3.4; as evidências atuais do fluxo e da prévia foram preservadas. As verificações da prévia local descritas abaixo foram realizadas na 0.3.0 e repetidas na 0.3.4; seu runtime não foi alterado nas versões 0.3.1/0.3.2/0.3.3. Esses resultados são fictícios e não ampliam a validação real.
 
 ## Diagnóstico do incidente
 
@@ -26,7 +38,7 @@ A correção fica no exportador e no runtime gerado; os arquivos exportados não
 
 ## Resultados atuais
 
-- 139 testes unitários passaram, em nove arquivos. Incluem parser estático sem eval/getters, Unicode e JSON/base64, allowlist e segredos, URLs privadas, redirecionamento/streaming/limites, SVG ativo, CSS/imports/fonts, hashes, originais byte a byte, exclusão de preview, helpers, configuração local, updater, navegação da orientação e permissões/isolamento do worker. Os casos anteriores de preflight, backup, conflito, cancelamento, gravação parcial e restauração permanecem ativos.
+- 145 testes unitários passaram, em dez arquivos. Incluem parser estático sem eval/getters, Unicode e JSON/base64, allowlist e segredos, URLs privadas, redirecionamento/streaming/limites, SVG ativo, CSS/imports/fonts, hashes, originais byte a byte, exclusão de preview, helpers, configuração local, updater, navegação da orientação, concorrência/cache/compactação e permissões/isolamento do worker. Os casos anteriores de preflight, backup, conflito, cancelamento, gravação parcial e restauração permanecem ativos.
 - `npm run test:e2e` passou no painel lateral nativo, com CodeMirror antigo/atual, captura textual/PNG sem mutações, projeto portátil, importação, envio fictício/backup/reload, conflito na restauração e reconexão. A etapa visual também passa pelo painel real, autorização por origem, worker autenticado e captura estática até gerar ZIP com cinco páginas e seis registros de recursos. Respostas públicas são fornecidas exclusivamente pela fixture dentro do perfil temporário.
 - `npm run test:preview` passou para duas lojas fictícias distintas, escura/clara: cinco páginas e seis registros de recursos por loja (quatro SVGs originais, folha de fontes e WOFF2 original). O alias, cores, tipografia, nomes, produtos, categorias e rotas são diferentes.
 - Cada ZIP foi extraído, movido a uma segunda pasta, teve a extração original removida e executou as ferramentas do próprio ZIP com `npm ci`, `check:integrity`, `check` e `pack`. Não usa ferramentas/caches do exportador para executar a prévia. O acesso à vitrine/CDN é bloqueado no navegador local após a instalação.
@@ -43,10 +55,10 @@ Evidências reproduzíveis, geradas e ignoradas pelo Git: `.cache/visual-validat
 |---|---|
 | Formato/captura visual | `src/core/preview.ts`, `src/browser/preview-capture.ts`, `src/browser/public-fetch.ts` |
 | Integração/permissões | `src/browser/background.ts`, `adapter.ts`, `bridge.ts`, `src/panel.ts`, manifesto e HTML do painel |
-| ZIP/gerador | `src/core/archive.ts`, `local-kit.ts` |
+| ZIP/gerador | `src/core/archive.ts`, `compression.ts`, `local-kit.ts`, `src/browser/zip-client.ts`, `zip-worker.ts` |
 | Prévia portátil | `local-runtime/dev.mjs`, `preview.mjs`, `integrity.mjs`, `engine.mjs`, `platform.mjs`, `platform-browser.mjs`, package/lock |
 | Atualização | `scripts/update-project.mjs`, `runtime-versions.json` |
-| Regressões | `tests/preview.test.ts`, fixtures visuais, testes de worker/runtime, `scripts/preview-e2e.mjs`, `e2e.mjs`, driver do painel |
+| Regressões | `tests/preview.test.ts`, `performance.test.ts`, fixtures visuais, testes de worker/runtime, `scripts/preview-e2e.mjs`, `e2e.mjs`, `compression-e2e.mjs`, driver do painel |
 | Distribuição/documentação | build, package/lock raiz, README, instalação, validação, roadmap e licenças |
 
 ## Reproduzir
@@ -56,6 +68,8 @@ npm ci
 npm run check
 npm run test:e2e
 npm run test:preview
+npm run test:compression
+npm run audit:performance
 npm run package
 ```
 
@@ -63,7 +77,7 @@ Os testes de navegador usam Chromium instalado pelo Playwright. Portas de teste 
 
 ## Nova exportação e projetos existentes
 
-Recarregue a extensão 0.3.3 na mesma pasta instalada, feche o painel antigo e recarregue o editor sem rascunhos pendentes. Confira a loja e confirme a cópia com captura visual habilitada. Autorize somente as origens apresentadas; se negar, a extensão indica a prévia parcial/demonstrativa. Extraia em uma pasta nova e execute os quatro comandos de integridade, compilação, prévia e retorno descritos no README.
+Recarregue a extensão 0.3.4 na mesma pasta instalada, feche o painel antigo e recarregue o editor sem rascunhos pendentes. Confira a loja e confirme a cópia com captura visual habilitada. Autorize somente as origens apresentadas; se negar, a extensão indica a prévia parcial/demonstrativa. Extraia em uma pasta nova e execute os quatro comandos de integridade, compilação, prévia e retorno descritos no README.
 
 Para trocar apenas ferramentas antigas, use `node scripts/update-project.mjs "C:/projeto"` e depois `--apply`. Dry-run não escreve. Ferramentas modificadas pelo usuário e dependências diferentes são recusadas antes da gravação; scripts personalizados, dados, configuração, tema, baseline e manifesto são preservados. Backup/journal precedem a atualização, com rechecagem contra edições concorrentes. Uma atualização não inventa contexto ausente: uma nova captura separada é necessária para isso.
 

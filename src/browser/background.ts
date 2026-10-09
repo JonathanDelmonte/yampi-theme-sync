@@ -210,15 +210,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (!cmd || !['context', 'inventory', 'read', 'readAsset', 'visual', 'write'].includes(cmd.op)) throw new Error('Comando não permitido.');
     if (previewAction && session.access !== 'read') throw new Error('Captura visual exige uma operação de leitura.');
     if (cmd.op === 'write' && session.access !== 'write') throw new Error('Esta operação permite apenas copiar. Gravação bloqueada.');
-    const [existing] = await chrome.scripting.executeScript({target: {tabId: session.tabId}, world: 'MAIN', func: () => {
-      return (window as unknown as {YampiThemeSyncBridge?: {version?: string}}).YampiThemeSyncBridge?.version === '0.3.3';
-    }});
-    if (!existing?.result) await chrome.scripting.executeScript({target: {tabId: session.tabId}, world: 'MAIN', files: ['bridge.js']});
-    const results = await chrome.scripting.executeScript({target: {tabId: session.tabId}, world: 'MAIN', func: async command => {
-      const api = (window as unknown as {YampiThemeSyncBridge: {command: (c: Command) => Promise<unknown>}}).YampiThemeSyncBridge;
-      if (!api) throw new Error('Adaptador do editor indisponível.');
+    // Check the bridge version and execute in one round trip. Never cache this
+    // readiness across reloads; reinject only when the current page needs it.
+    const invoke=()=>chrome.scripting.executeScript({target: {tabId: session.tabId}, world: 'MAIN', func: async command => {
+      const api = (window as unknown as {YampiThemeSyncBridge?: {version?:string;command: (c: Command) => Promise<unknown>}}).YampiThemeSyncBridge;
+      if (api?.version !== '0.3.4') return {needsBridge:true};
       return api.command(command);
     }, args: [cmd]});
+    let results=await invoke();
+    if((results[0]?.result as {needsBridge?:boolean}|undefined)?.needsBridge){
+      await chrome.scripting.executeScript({target: {tabId: session.tabId}, world: 'MAIN', files: ['bridge.js']});
+      results=await invoke();
+    }
     const reply = results[0]?.result as {ok: boolean; value?: unknown; error?: string} | undefined;
     if (!reply?.ok) throw new Error(reply?.error || 'Sem resposta do editor.');
     if (previewAction) {
